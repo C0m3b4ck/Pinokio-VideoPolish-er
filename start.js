@@ -7,10 +7,8 @@ module.exports = {
         venv: "env",
         path: "app",
         message: [
-          "python cli.py --help",
+          "python gradio_app.py",
         ],
-        input: true,
-        chain: true,
       }
     },
   ]
