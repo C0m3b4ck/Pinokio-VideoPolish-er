@@ -7,17 +7,18 @@ with automatic noise removal and stutter detection.
 """
 
 import os
+import re
 import sys
 import time
 import json
 import tempfile
-import traceback
+import shutil
 from pathlib import Path
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from typing import Optional
+from typing import Optional, List
 
 import gradio as gr
 
@@ -41,8 +42,17 @@ MODEL_CHOICES = [
     "distil-whisper", "moonshine", "sensevoice", "vosk", "whisper-original",
     "whisper-cpp",
 ]
+MODEL_SIZES = [
+    "tiny", "base", "small", "medium", "large-v3",
+    "distil-large-v3", "distil-small.en",
+]
 FORMAT_CHOICES = ["srt", "vtt", "ass", "json"]
 DEVICE_CHOICES = ["auto", "cuda", "cpu"]
+
+
+def sanitize_filename_stem(stem: str) -> str:
+    """Remove characters from a filename stem that could cause path issues."""
+    return re.sub(r'[^\w\-.]', '_', stem)[:128]
 
 
 def validate_file(file_path: str, allowed_extensions: tuple) -> Optional[str]:
@@ -50,7 +60,7 @@ def validate_file(file_path: str, allowed_extensions: tuple) -> Optional[str]:
     if file_path is None:
         return "No file provided."
     if not os.path.exists(file_path):
-        return f"File not found: {file_path}"
+        return "File not found."
     ext = os.path.splitext(file_path)[1].lower()
     if ext not in allowed_extensions:
         return f"Unsupported file format: {ext}. Supported: {', '.join(allowed_extensions)}"
@@ -78,11 +88,38 @@ def process_audio(
     progress=gr.Progress(),
 ):
     """Main processing pipeline. Returns (log_text, output_files_list, stats_json, transcription_text)."""
-    logs = []
-    output_files = []
+    logs: List[str] = []
+    output_files: List[str] = []
+    output_dir: Optional[str] = None
 
     def log(msg: str):
         logs.append(msg)
+
+    try:
+        return _run_pipeline(
+            input_file, model_name, language, model_size,
+            remove_silence, silence_threshold, min_silence_duration,
+            remove_stutters, stutter_patterns, output_format,
+            words_per_chunk, device, script_file, similarity_threshold,
+            logs, output_files, progress, log,
+        )
+    finally:
+        if output_dir is not None and os.path.isdir(output_dir):
+            try:
+                shutil.rmtree(output_dir, ignore_errors=True)
+            except Exception:
+                pass
+
+
+def _run_pipeline(
+    input_file, model_name, language, model_size,
+    remove_silence, silence_threshold, min_silence_duration,
+    remove_stutters, stutter_patterns, output_format,
+    words_per_chunk, device, script_file, similarity_threshold,
+    logs, output_files, progress, log,
+):
+    """Inner pipeline. Uses a mutable dict to share output_dir with the outer finally block."""
+    ctx = {"output_dir": None}
 
     # --- Validate inputs ---
     if input_file is None:
@@ -94,12 +131,13 @@ def process_audio(
     if script_file is not None and script_file != "":
         err = validate_file(script_file, SUPPORTED_SCRIPT_EXTENSIONS)
         if err:
-            return f"Warning: Invalid script file: {err}. Continuing without verification.\n", [], "{}", ""
+            log(f"Warning: Invalid script file: {err}. Continuing without verification.")
 
     progress(0.05, desc="Preparing output directory...")
 
-    base_name = Path(input_file).stem
+    base_name = sanitize_filename_stem(Path(input_file).stem)
     output_dir = tempfile.mkdtemp(prefix="videopolish_")
+    ctx["output_dir"] = output_dir
     silence_output = os.path.join(output_dir, "audio_no_silence.wav")
 
     stats = {
@@ -134,7 +172,7 @@ def process_audio(
             else:
                 log("Warning: Could not remove silence. Continuing with original audio.")
         except Exception as e:
-            log(f"Warning: Silence removal failed: {e}")
+            log(f"Warning: Silence removal failed: {type(e).__name__}")
     else:
         log("=== Step 1: Skipping Silence Removal ===")
 
@@ -144,7 +182,7 @@ def process_audio(
     try:
         words = transcribe_audio(working_file, model_name, model_size, language, device)
     except Exception as e:
-        return f"Error during transcription: {e}\n\n{traceback.format_exc()}", [], "{}", ""
+        return f"Error during transcription: {type(e).__name__}", [], "{}", ""
 
     if not words:
         return "Error: No words detected in audio.", [], "{}", ""
@@ -156,7 +194,6 @@ def process_audio(
     log(f"Transcription complete: {len(words)} words detected.")
 
     # --- Step 3: Stutter removal ---
-    stutter_stats = None
     if remove_stutters:
         progress(0.65, desc="Removing stutters...")
         log("=== Step 3: Removing Stutters ===")
@@ -166,7 +203,7 @@ def process_audio(
             stats["stutter_stats"] = stutter_stats
             log(f"Stutters removed: {stutter_stats['stutters_removed']}")
         except Exception as e:
-            log(f"Warning: Stutter removal failed: {e}")
+            log(f"Warning: Stutter removal failed: {type(e).__name__}")
     else:
         log("=== Step 3: Skipping Stutter Removal ===")
 
@@ -193,7 +230,7 @@ def process_audio(
             words_to_json(words, p, int(words_per_chunk))
             output_files.append(p)
     except Exception as e:
-        log(f"Warning: Output generation failed: {e}")
+        log(f"Warning: Output generation failed: {type(e).__name__}")
 
     # --- Step 5: Verification ---
     if script_file and script_file != "" and os.path.exists(script_file):
@@ -203,19 +240,18 @@ def process_audio(
             original_text = parse_script_file(script_file)
             if original_text:
                 transcription_text = extract_text_from_words(words)
-                is_valid, vstats = verify_transcription(original_text, transcription_text, float(similarity_threshold))
+                is_valid, vstats = verify_transcription(
+                    original_text, transcription_text, float(similarity_threshold),
+                )
                 stats["verification_stats"] = vstats
                 log(f"Similarity: {vstats['similarity']:.1f}% (threshold: {vstats['threshold']:.1f}%)")
-                if is_valid:
-                    log("Verification PASSED")
-                else:
-                    log("Verification FAILED - Possible content loss detected")
+                log("Verification PASSED" if is_valid else "Verification FAILED - Possible content loss detected")
                 if vstats["missing_words"]:
                     log(f"Missing words: {', '.join(vstats['missing_words'][:20])}")
             else:
                 log("Warning: Could not parse script file.")
         except Exception as e:
-            log(f"Warning: Verification failed: {e}")
+            log(f"Warning: Verification failed: {type(e).__name__}")
 
     # --- Save stats ---
     end_time = time.time()
@@ -243,9 +279,9 @@ def process_audio(
         log(f"Verification: {'PASSED' if v['is_valid'] else 'FAILED'} ({v['similarity']:.1f}%)")
     log(f"Words: {len(words)}")
     log(f"Processing time: {stats['processing_time']:.1f}s")
-    log(f"\nOutput files:")
-    for f in output_files:
-        log(f"  {os.path.basename(f)}")
+    log("\nOutput files:")
+    for fp in output_files:
+        log(f"  {os.path.basename(fp)}")
 
     progress(1.0, desc="Done!")
     transcription_text = extract_text_from_words(words)
@@ -264,7 +300,7 @@ def build_ui() -> gr.Blocks:
         """,
     ) as app:
         gr.HTML("<h1 class='main-title'>VideoPolish-er</h1>")
-        gr.HTML("<p class='subtitle'>Transcription & Audio Cleanup Tool with noise removal and stutter detection</p>")
+        gr.HTML("<p class='subtitle'>Transcription &amp; Audio Cleanup Tool with noise removal and stutter detection</p>")
 
         with gr.Row():
             # --- Left column: inputs ---
@@ -281,13 +317,16 @@ def build_ui() -> gr.Blocks:
                         value="faster-whisper",
                         label="Transcription Model",
                     )
-                    model_size = gr.Textbox(
+                    model_size = gr.Dropdown(
+                        choices=MODEL_SIZES,
                         value="large-v3",
                         label="Model Size",
+                        allow_custom_value=True,
                     )
                     language = gr.Textbox(
                         value="en",
                         label="Language Code",
+                        max_length=10,
                     )
                     device = gr.Dropdown(
                         choices=DEVICE_CHOICES,
@@ -311,6 +350,7 @@ def build_ui() -> gr.Blocks:
                     stutter_patterns = gr.Textbox(
                         value="uhm,uh,um,er,ah,hmm,mhm,erm,umm",
                         label="Stutter Patterns (comma-separated)",
+                        max_length=500,
                     )
 
                 with gr.Accordion("Output Settings", open=False):
