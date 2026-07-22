@@ -1,4 +1,4 @@
-# Pinokio-VideoPolish-er
+# Pinokio-VideoPolish-er <img src=https://github.com/C0m3b4ck/Pinokio-VideoPolish-er/blob/main/icon.png>
 
 1-click launcher for [VideoPolish-er](https://github.com/C0m3b4ck/VideoPolish-er) on [Pinokio](https://pinokio.computer/).
 
