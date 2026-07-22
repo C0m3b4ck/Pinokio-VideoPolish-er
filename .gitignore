@@ -1,0 +1,16 @@
+# App folder (will be cloned during install)
+app/
+
+# Environment
+env/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
