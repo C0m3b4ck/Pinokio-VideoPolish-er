@@ -1,5 +1,8 @@
 {
   "title": "VideoPolish-er",
   "description": "Transcription & Audio Cleanup Tool with noise removal and stutter detection",
-  "icon": "icon.png"
+  "icon": "icon.png",
+  "author": "C0m3b4ck",
+  "license": "Apache-2.0",
+  "repository": "https://github.com/C0m3b4ck/Pinokio-VideoPolish-er"
 }
