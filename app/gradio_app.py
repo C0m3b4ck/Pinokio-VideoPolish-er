@@ -236,15 +236,7 @@ def _run_pipeline(
         log("=== Step 3: Skipping Stutter Removal ===")
 
     # --- Step 4: Fix grammar/punctuation ---
-    if fix_grammar:
-        progress(0.72, desc="Fixing grammar & punctuation...")
-        log("=== Step 4: Fixing Grammar & Punctuation ===")
-        try:
-            words = fix_grammar_punctuation(words, int(words_per_chunk))
-            log("Grammar & punctuation fixed")
-        except Exception as e:
-            log(f"Warning: Grammar fix failed: {type(e).__name__}")
-    elif llm_fix:
+    if llm_fix:
         progress(0.72, desc="LLM grammar correction...")
         log("=== Step 4: LLM Grammar Correction ===")
         try:
@@ -252,8 +244,14 @@ def _run_pipeline(
             log("LLM grammar correction complete")
         except Exception as e:
             log(f"Warning: LLM fix failed: {type(e).__name__}")
-    else:
-        log("=== Step 4: Skipping Grammar Fix ===")
+    elif fix_grammar or not llm_fix:
+        progress(0.72, desc="Fixing grammar & punctuation...")
+        log("=== Step 4: Fixing Grammar & Punctuation ===")
+        try:
+            words = fix_grammar_punctuation(words, int(words_per_chunk))
+            log("Grammar & punctuation fixed")
+        except Exception as e:
+            log(f"Warning: Grammar fix failed: {type(e).__name__}")
 
     # --- Step 5: Generate output ---
     progress(0.80, desc="Generating output files...")

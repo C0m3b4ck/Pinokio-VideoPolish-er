@@ -1240,53 +1240,52 @@ def burn_subtitles_to_video(
 def fix_grammar_punctuation(words: List[Dict], words_per_group: int = 3) -> List[Dict]:
     """Fix common grammar and punctuation issues in transcribed words.
 
-    Fixes: capitalizing 'i', capitalizing first word of each subtitle chunk,
-    capitalizing after sentence-ending punctuation, adding periods at chunk ends.
+    - Capitalizes first letter of entire transcription
+    - Capitalizes first word of each subtitle chunk
+    - Capitalizes 'i' and 'i'm', 'i've', 'i'll', 'i'd' (case-insensitive)
+    - Capitalizes word after sentence-ending punctuation (. ! ?)
     """
     if not words:
         return words
 
-    fixed = []
-    for i, word in enumerate(words):
-        w = dict(word)
-        text = w.get("word", "")
+    fixed = [dict(w) for w in words]
 
-        # Capitalize standalone "i" to "I"
-        if text == "i":
-            w["word"] = "I"
-        elif text == "i'm":
-            w["word"] = "I'm"
-        elif text == "i've":
-            w["word"] = "I've"
-        elif text == "i'll":
-            w["word"] = "I'll"
-        elif text == "i'd":
-            w["word"] = "I'd"
+    # Case-insensitive i-variants
+    i_map = {"i": "I", "i'm": "I'm", "i've": "I've", "i'll": "I'll", "i'd": "I'd"}
 
-        # Capitalize first letter if at start of a new sentence (after . ! ?)
-        if i > 0 and text:
-            prev_text = words[i - 1].get("word", "").rstrip()
-            if prev_text and prev_text[-1] in ".!?":
-                w["word"] = text[0].upper() + text[1:] if len(text) > 1 else text.upper()
+    for i in range(len(fixed)):
+        text = fixed[i].get("word", "").strip()
+        if not text:
+            continue
 
-        fixed.append(w)
+        lower = text.lower()
+
+        # Fix i-variants
+        if lower in i_map:
+            fixed[i] = dict(fixed[i])
+            fixed[i]["word"] = i_map[lower]
+            continue
+
+        # Capitalize after sentence-ending punctuation
+        if i > 0:
+            prev = fixed[i - 1].get("word", "").strip()
+            if prev and prev[-1] in ".!?":
+                fixed[i] = dict(fixed[i])
+                fixed[i]["word"] = text[0].upper() + text[1:]
 
     # Capitalize first word of entire transcription
-    if fixed:
-        first = dict(fixed[0])
-        t = first.get("word", "")
-        if t:
-            first["word"] = t[0].upper() + t[1:] if len(t) > 1 else t.upper()
-        fixed[0] = first
+    if fixed and fixed[0].get("word", "").strip():
+        t = fixed[0]["word"].strip()
+        fixed[0] = dict(fixed[0])
+        fixed[0]["word"] = t[0].upper() + t[1:] if len(t) > 1 else t.upper()
 
     # Capitalize first word of each subtitle chunk
-    for chunk_start in range(0, len(fixed), words_per_group):
-        chunk_end = min(chunk_start + words_per_group, len(fixed))
-        for j in range(chunk_start, chunk_end):
-            text = fixed[j].get("word", "")
-            if text:
+    for start in range(0, len(fixed), words_per_group):
+        for j in range(start, min(start + words_per_group, len(fixed))):
+            t = fixed[j].get("word", "").strip()
+            if t:
                 fixed[j] = dict(fixed[j])
-                fixed[j]["word"] = text[0].upper() + text[1:] if len(text) > 1 else text.upper()
+                fixed[j]["word"] = t[0].upper() + t[1:] if len(t) > 1 else t.upper()
                 break
 
     return fixed
@@ -1518,19 +1517,17 @@ def main():
 
     base_name = Path(args.input).stem
 
-    # Step 4: Fix grammar/punctuation
-    if args.fix_grammar:
-        print_info("\n=== Step 4: Fixing Grammar & Punctuation ===")
-        words = fix_grammar_punctuation(words, args.words_per_chunk)
-        print_success("Grammar & punctuation fixed")
-    elif args.llm_fix:
+    # Step 4: Fix grammar/punctuation (always runs by default)
+    if args.llm_fix:
         print_info("\n=== Step 4: LLM Grammar Correction ===")
         words = fix_text_with_llm(words, args.llm_url, args.llm_api_key, args.llm_model)
     elif args.manual_edit:
         print_info("\n=== Step 4: Manual Edit ===")
         words = prompt_manual_edit(words, args.output, base_name)
     else:
-        print_info("\n=== Step 4: Skipping Grammar Fix ===")
+        print_info("\n=== Step 4: Fixing Grammar & Punctuation ===")
+        words = fix_grammar_punctuation(words, args.words_per_chunk)
+        print_success("Grammar & punctuation fixed")
 
     # Step 5: Generate output files
     print_info("\n=== Step 5: Generating Output Files ===")
