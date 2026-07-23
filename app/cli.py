@@ -263,6 +263,51 @@ Examples:
         help="Save transcription to file and let you edit it manually before output"
     )
 
+    parser.add_argument(
+        "--font",
+        type=str,
+        default="Arial",
+        help="Subtitle font name (default: Arial)"
+    )
+
+    parser.add_argument(
+        "--font-size",
+        type=int,
+        default=24,
+        help="Subtitle font size 12-72 (default: 24)"
+    )
+
+    parser.add_argument(
+        "--font-color",
+        type=str,
+        default="White",
+        choices=["White", "Yellow", "Cyan", "Green", "Red", "Magenta", "Blue", "Black"],
+        help="Subtitle font color (default: White)"
+    )
+
+    parser.add_argument(
+        "--position",
+        type=str,
+        default="Bottom center",
+        choices=["Bottom center", "Top center", "Middle center",
+                 "Bottom left", "Bottom right", "Top left", "Top right"],
+        help="Subtitle position (default: Bottom center)"
+    )
+
+    parser.add_argument(
+        "--outline",
+        type=int,
+        default=2,
+        help="Subtitle outline thickness 0-4 (default: 2)"
+    )
+
+    parser.add_argument(
+        "--shadow",
+        type=int,
+        default=1,
+        help="Subtitle shadow depth 0-3 (default: 1)"
+    )
+
     return parser.parse_args()
 
 
@@ -1070,15 +1115,28 @@ def words_to_vtt(words: List[Dict], output_path: str, words_per_group: int = 3):
     print_success(f"WebVTT saved to {output_path} ({len(groups)} blocks)")
 
 
-def words_to_ass(words: List[Dict], output_path: str, words_per_group: int = 3):
-    """Convert word-level timestamps into ASS subtitles."""
+def words_to_ass(words: List[Dict], output_path: str, words_per_group: int = 3, prefs: dict = None):
+    """Convert word-level timestamps into ASS subtitles with optional styling."""
+    import re as _re
+
     def fmt(seconds: float) -> str:
         h = int(seconds // 3600)
         m = int((seconds % 3600) // 60)
         s = seconds % 60
         return f"{h}:{m:02d}:{s:05.2f}"
 
-    ass_content = """[Script Info]
+    if prefs is None:
+        prefs = {}
+
+    font_name = _re.sub(r"[^a-zA-Z0-9\s\-\(\)\.]", "", prefs.get("font", "Arial"))[:64]
+    font_size = max(8, min(200, int(prefs.get("font_size", 24))))
+    primary_color = prefs.get("color", "&H00FFFFFF")
+    outline_color = "&H00000000"
+    outline_val = max(0, min(10, int(prefs.get("outline", 2))))
+    shadow_val = max(0, min(10, int(prefs.get("shadow", 1))))
+    alignment = int(prefs.get("position", 2))
+
+    ass_content = f"""[Script Info]
 Title: VideoPolish-er Subtitles
 ScriptType: v4.00+
 PlayResX: 1920
@@ -1087,7 +1145,7 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Arial,24,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1, 2,20,20,30,1
+Style: Default,{font_name},{font_size},{primary_color},&H000000FF,{outline_color},&H80000000,0,0,0,0,100,100,0,0,1,{outline_val},{shadow_val},{alignment},20,20,30,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -1343,6 +1401,39 @@ def main():
     if not validate_input_file(args.input):
         sys.exit(1)
 
+    # Subtitle styling presets
+    COLOR_PRESETS = {
+        "White": "&H00FFFFFF",
+        "Yellow": "&H0000FFFF",
+        "Cyan": "&H00FFFF00",
+        "Green": "&H0000FF00",
+        "Red": "&H000000FF",
+        "Magenta": "&H00FF00FF",
+        "Blue": "&H00FF0000",
+        "Black": "&H00000000",
+    }
+
+    POSITION_PRESETS = {
+        "Bottom center": 2,
+        "Top center": 8,
+        "Middle center": 5,
+        "Bottom left": 1,
+        "Bottom right": 3,
+        "Top left": 7,
+        "Top right": 9,
+    }
+
+    subtitle_prefs = {
+        "font": args.font,
+        "font_size": args.font_size,
+        "color": COLOR_PRESETS.get(args.font_color, "&H00FFFFFF"),
+        "color_name": args.font_color,
+        "position": POSITION_PRESETS.get(args.position, 2),
+        "position_name": args.position,
+        "outline": args.outline,
+        "shadow": args.shadow,
+    }
+
     # Create output directory
     if not create_output_directory(args.output):
         sys.exit(1)
@@ -1448,7 +1539,7 @@ def main():
 
     if args.format in ["ass", "all"]:
         ass_path = os.path.join(args.output, f"{base_name}.ass")
-        words_to_ass(words, ass_path, args.words_per_chunk)
+        words_to_ass(words, ass_path, args.words_per_chunk, prefs=subtitle_prefs)
         output_files.append(ass_path)
 
     if args.format in ["json", "all"]:

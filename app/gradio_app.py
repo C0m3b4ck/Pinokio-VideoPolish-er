@@ -92,6 +92,12 @@ def process_audio(
     llm_url,
     llm_api_key,
     llm_model,
+    font_name,
+    font_size,
+    font_color,
+    position_name,
+    outline,
+    shadow,
     progress=gr.Progress(),
 ):
     """Main processing pipeline. Returns (log_text, output_files_list, stats_json, transcription_text)."""
@@ -107,6 +113,7 @@ def process_audio(
         remove_stutters, stutter_patterns, output_format,
         words_per_chunk, device, script_file, similarity_threshold,
         burn_subtitles, fix_grammar, llm_fix, llm_url, llm_api_key, llm_model,
+        font_name, font_size, font_color, position_name, outline, shadow,
         logs, output_files, progress, log,
     )
 
@@ -117,6 +124,7 @@ def _run_pipeline(
     remove_stutters, stutter_patterns, output_format,
     words_per_chunk, device, script_file, similarity_threshold,
     burn_subtitles, fix_grammar, llm_fix, llm_url, llm_api_key, llm_model,
+    font_name, font_size, font_color, position_name, outline, shadow,
     logs, output_files, progress, log,
 ):
     """Inner pipeline. Uses a mutable dict to share output_dir with the outer finally block."""
@@ -141,6 +149,24 @@ def _run_pipeline(
     os.makedirs(output_dir, exist_ok=True)
     ctx["output_dir"] = output_dir
     silence_output = os.path.join(output_dir, "audio_no_silence.wav")
+
+    COLOR_PRESETS = {
+        "White": "&H00FFFFFF", "Yellow": "&H0000FFFF", "Cyan": "&H00FFFF00",
+        "Green": "&H0000FF00", "Red": "&H000000FF", "Magenta": "&H00FF00FF",
+        "Blue": "&H00FF0000", "Black": "&H00000000",
+    }
+    POSITION_PRESETS = {
+        "Bottom center": 2, "Top center": 8, "Middle center": 5,
+        "Bottom left": 1, "Bottom right": 3, "Top left": 7, "Top right": 9,
+    }
+    subtitle_prefs = {
+        "font": font_name, "font_size": int(font_size),
+        "color": COLOR_PRESETS.get(font_color, "&H00FFFFFF"),
+        "color_name": font_color,
+        "position": POSITION_PRESETS.get(position_name, 2),
+        "position_name": position_name,
+        "outline": int(outline), "shadow": int(shadow),
+    }
 
     stats = {
         "input_file": os.path.basename(input_file),
@@ -245,7 +271,7 @@ def _run_pipeline(
             output_files.append(p)
         if fmt_lower in ("ass", "all"):
             p = os.path.join(output_dir, f"{base_name}.ass")
-            words_to_ass(words, p, int(words_per_chunk))
+            words_to_ass(words, p, int(words_per_chunk), prefs=subtitle_prefs)
             output_files.append(p)
         if fmt_lower in ("json", "all"):
             p = os.path.join(output_dir, f"{base_name}.json")
@@ -416,6 +442,39 @@ def build_ui() -> gr.Blocks:
                         info="Hardcodes subtitles onto the video file using ffmpeg.",
                     )
 
+                with gr.Accordion("Subtitle Styling", open=False):
+                    font_name = gr.Dropdown(
+                        choices=["Arial", "Helvetica", "Times New Roman", "Georgia",
+                                 "Verdana", "Trebuchet MS", "Impact", "Courier New",
+                                 "Lucida Console", "Tahoma", "Calibri"],
+                        value="Arial",
+                        label="Font",
+                        allow_custom_value=True,
+                    )
+                    font_size = gr.Slider(
+                        minimum=12, maximum=72, value=24, step=1,
+                        label="Font Size",
+                    )
+                    font_color = gr.Dropdown(
+                        choices=["White", "Yellow", "Cyan", "Green", "Red", "Magenta", "Blue", "Black"],
+                        value="White",
+                        label="Font Color",
+                    )
+                    position_name = gr.Dropdown(
+                        choices=["Bottom center", "Top center", "Middle center",
+                                 "Bottom left", "Bottom right", "Top left", "Top right"],
+                        value="Bottom center",
+                        label="Position",
+                    )
+                    outline = gr.Slider(
+                        minimum=0, maximum=4, value=2, step=1,
+                        label="Outline Thickness",
+                    )
+                    shadow = gr.Slider(
+                        minimum=0, maximum=3, value=1, step=1,
+                        label="Shadow Depth",
+                    )
+
                 with gr.Accordion("Text Fix", open=False):
                     fix_grammar = gr.Checkbox(
                         label="Fix Grammar & Punctuation",
@@ -504,6 +563,12 @@ def build_ui() -> gr.Blocks:
                 llm_url,
                 llm_api_key,
                 llm_model,
+                font_name,
+                font_size,
+                font_color,
+                position_name,
+                outline,
+                shadow,
             ],
             outputs=[log_output, output_files, stats_json, transcription_text],
         )
