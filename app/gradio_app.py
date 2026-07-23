@@ -240,7 +240,7 @@ def _run_pipeline(
         progress(0.72, desc="Fixing grammar & punctuation...")
         log("=== Step 4: Fixing Grammar & Punctuation ===")
         try:
-            words = fix_grammar_punctuation(words)
+            words = fix_grammar_punctuation(words, int(words_per_chunk))
             log("Grammar & punctuation fixed")
         except Exception as e:
             log(f"Warning: Grammar fix failed: {type(e).__name__}")

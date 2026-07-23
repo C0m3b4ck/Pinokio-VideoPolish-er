@@ -1237,11 +1237,11 @@ def burn_subtitles_to_video(
     return True
 
 
-def fix_grammar_punctuation(words: List[Dict]) -> List[Dict]:
+def fix_grammar_punctuation(words: List[Dict], words_per_group: int = 3) -> List[Dict]:
     """Fix common grammar and punctuation issues in transcribed words.
 
-    Fixes: capitalizing 'i', capitalizing first word of each subtitle group,
-    adding missing periods at end of sentences, fixing common transcription artifacts.
+    Fixes: capitalizing 'i', capitalizing first word of each subtitle chunk,
+    capitalizing after sentence-ending punctuation, adding periods at chunk ends.
     """
     if not words:
         return words
@@ -1278,6 +1278,16 @@ def fix_grammar_punctuation(words: List[Dict]) -> List[Dict]:
         if t:
             first["word"] = t[0].upper() + t[1:] if len(t) > 1 else t.upper()
         fixed[0] = first
+
+    # Capitalize first word of each subtitle chunk
+    for chunk_start in range(0, len(fixed), words_per_group):
+        chunk_end = min(chunk_start + words_per_group, len(fixed))
+        for j in range(chunk_start, chunk_end):
+            text = fixed[j].get("word", "")
+            if text:
+                fixed[j] = dict(fixed[j])
+                fixed[j]["word"] = text[0].upper() + text[1:] if len(text) > 1 else text.upper()
+                break
 
     return fixed
 
@@ -1511,7 +1521,7 @@ def main():
     # Step 4: Fix grammar/punctuation
     if args.fix_grammar:
         print_info("\n=== Step 4: Fixing Grammar & Punctuation ===")
-        words = fix_grammar_punctuation(words)
+        words = fix_grammar_punctuation(words, args.words_per_chunk)
         print_success("Grammar & punctuation fixed")
     elif args.llm_fix:
         print_info("\n=== Step 4: LLM Grammar Correction ===")
