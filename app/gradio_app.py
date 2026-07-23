@@ -11,8 +11,6 @@ import re
 import sys
 import time
 import json
-import tempfile
-import shutil
 from pathlib import Path
 
 # Add parent directory to path for imports
@@ -92,7 +90,6 @@ def process_audio(
     """Main processing pipeline. Returns (log_text, output_files_list, stats_json, transcription_text)."""
     logs: List[str] = []
     output_files: List[str] = []
-    output_dir: Optional[str] = None
 
     def log(msg: str):
         logs.append(msg)
@@ -106,12 +103,6 @@ def process_audio(
             burn_subtitles,
             logs, output_files, progress, log,
         )
-    finally:
-        if output_dir is not None and os.path.isdir(output_dir):
-            try:
-                shutil.rmtree(output_dir, ignore_errors=True)
-            except Exception:
-                pass
 
 
 def _run_pipeline(
@@ -140,7 +131,8 @@ def _run_pipeline(
     progress(0.05, desc="Preparing output directory...")
 
     base_name = sanitize_filename_stem(Path(input_file).stem)
-    output_dir = tempfile.mkdtemp(prefix="videopolish_")
+    output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
+    os.makedirs(output_dir, exist_ok=True)
     ctx["output_dir"] = output_dir
     silence_output = os.path.join(output_dir, "audio_no_silence.wav")
 
