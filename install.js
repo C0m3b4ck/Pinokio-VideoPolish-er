@@ -7,6 +7,14 @@ module.exports = {
       method: "shell.run",
       params: {
         message: [
+          "sudo apt install -y libcublas12",
+        ],
+      }
+    },
+    {
+      method: "shell.run",
+      params: {
+        message: [
           "git clone https://github.com/C0m3b4ck/VideoPolish-er.git app",
         ]
       }
