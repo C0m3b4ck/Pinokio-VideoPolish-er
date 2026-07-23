@@ -83,6 +83,7 @@ def process_audio(
     stutter_patterns,
     output_format,
     words_per_chunk,
+    gap_threshold,
     device,
     script_file,
     similarity_threshold,
@@ -117,7 +118,7 @@ def process_audio(
         input_file, model_name, language, model_size,
         remove_silence, silence_threshold, min_silence_duration,
         remove_stutters, stutter_patterns, output_format,
-        words_per_chunk, device, script_file, similarity_threshold,
+        words_per_chunk, gap_threshold, device, script_file, similarity_threshold,
         burn_subtitles, llm_fix, llm_url, llm_api_key, llm_model,
         font_name, font_size, font_color, position_name, outline, shadow,
         capitalize_i, capitalize_after_punct, add_commas_conjunctions,
@@ -130,7 +131,7 @@ def _run_pipeline(
     input_file, model_name, language, model_size,
     remove_silence, silence_threshold, min_silence_duration,
     remove_stutters, stutter_patterns, output_format,
-    words_per_chunk, device, script_file, similarity_threshold,
+    words_per_chunk, gap_threshold, device, script_file, similarity_threshold,
     burn_subtitles, llm_fix, llm_url, llm_api_key, llm_model,
     font_name, font_size, font_color, position_name, outline, shadow,
     capitalize_i, capitalize_after_punct, add_commas_conjunctions,
@@ -280,19 +281,19 @@ def _run_pipeline(
     try:
         if fmt_lower in ("srt", "all"):
             p = os.path.join(output_dir, f"{base_name}.srt")
-            words_to_srt(words, p, int(words_per_chunk))
+            words_to_srt(words, p, int(words_per_chunk), float(gap_threshold))
             output_files.append(p)
         if fmt_lower in ("vtt", "all"):
             p = os.path.join(output_dir, f"{base_name}.vtt")
-            words_to_vtt(words, p, int(words_per_chunk))
+            words_to_vtt(words, p, int(words_per_chunk), float(gap_threshold))
             output_files.append(p)
         if fmt_lower in ("ass", "all"):
             p = os.path.join(output_dir, f"{base_name}.ass")
-            words_to_ass(words, p, int(words_per_chunk), prefs=subtitle_prefs)
+            words_to_ass(words, p, int(words_per_chunk), prefs=subtitle_prefs, gap_threshold=float(gap_threshold))
             output_files.append(p)
         if fmt_lower in ("json", "all"):
             p = os.path.join(output_dir, f"{base_name}.json")
-            words_to_json(words, p, int(words_per_chunk))
+            words_to_json(words, p, int(words_per_chunk), float(gap_threshold))
             output_files.append(p)
     except Exception as e:
         log(f"Warning: Output generation failed: {type(e).__name__}")
@@ -453,6 +454,11 @@ def build_ui() -> gr.Blocks:
                         minimum=1, maximum=8, value=3, step=1,
                         label="Words per Subtitle Chunk",
                     )
+                    gap_threshold = gr.Slider(
+                        minimum=0.1, maximum=5.0, value=1.0, step=0.1,
+                        label="Gap Threshold (seconds)",
+                        info="Split subtitle chunks when there's a pause longer than this",
+                    )
                     burn_subtitles = gr.Checkbox(
                         label="Burn Subtitles into Video",
                         value=False,
@@ -599,6 +605,7 @@ def build_ui() -> gr.Blocks:
                 stutter_patterns,
                 output_format,
                 words_per_chunk,
+                gap_threshold,
                 device,
                 script_file,
                 similarity_threshold,

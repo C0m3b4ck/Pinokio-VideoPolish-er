@@ -193,6 +193,13 @@ Examples:
     )
 
     parser.add_argument(
+        "--gap-threshold",
+        type=float,
+        default=1.0,
+        help="Seconds of silence to split subtitle chunks (default: 1.0)"
+    )
+
+    parser.add_argument(
         "--device",
         choices=["auto", "cuda", "cpu"],
         default="auto",
@@ -1113,8 +1120,11 @@ def transcribe_whisper_cpp(
     return all_words
 
 
-def words_to_srt(words: List[Dict], output_path: str, words_per_group: int = 3):
-    """Convert word-level timestamps into SRT subtitles."""
+def words_to_srt(words: List[Dict], output_path: str, words_per_group: int = 3, gap_threshold: float = 1.0):
+    """Convert word-level timestamps into SRT subtitles.
+
+    Splits subtitle chunks when there's a gap > gap_threshold seconds between words.
+    """
     def fmt(seconds: float) -> str:
         h, rem = divmod(seconds, 3600)
         m, s = divmod(rem, 60)
@@ -1122,9 +1132,19 @@ def words_to_srt(words: List[Dict], output_path: str, words_per_group: int = 3):
         return f"{int(h):02d}:{int(m):02d}:{int(s):02d},{ms:03d}"
 
     groups = []
-    for i in range(0, len(words), words_per_group):
-        chunk = words[i:i + words_per_group]
-        text = " ".join(w["word"].strip() for w in chunk)
+    chunk = []
+    for w in words:
+        if chunk and (w["start"] - chunk[-1]["end"]) > gap_threshold:
+            text = " ".join(c["word"].strip() for c in chunk)
+            groups.append((chunk[0]["start"], chunk[-1]["end"], text))
+            chunk = []
+        chunk.append(w)
+        if len(chunk) >= words_per_group:
+            text = " ".join(c["word"].strip() for c in chunk)
+            groups.append((chunk[0]["start"], chunk[-1]["end"], text))
+            chunk = []
+    if chunk:
+        text = " ".join(c["word"].strip() for c in chunk)
         groups.append((chunk[0]["start"], chunk[-1]["end"], text))
 
     lines = []
@@ -1135,8 +1155,11 @@ def words_to_srt(words: List[Dict], output_path: str, words_per_group: int = 3):
     print_success(f"SRT saved to {output_path} ({len(groups)} blocks)")
 
 
-def words_to_vtt(words: List[Dict], output_path: str, words_per_group: int = 3):
-    """Convert word-level timestamps into WebVTT subtitles."""
+def words_to_vtt(words: List[Dict], output_path: str, words_per_group: int = 3, gap_threshold: float = 1.0):
+    """Convert word-level timestamps into WebVTT subtitles.
+
+    Splits subtitle chunks when there's a gap > gap_threshold seconds between words.
+    """
     def fmt(seconds: float) -> str:
         h, rem = divmod(seconds, 3600)
         m, s = divmod(rem, 60)
@@ -1144,9 +1167,19 @@ def words_to_vtt(words: List[Dict], output_path: str, words_per_group: int = 3):
         return f"{int(h):02d}:{int(m):02d}:{int(s):02d}.{ms:03d}"
 
     groups = []
-    for i in range(0, len(words), words_per_group):
-        chunk = words[i:i + words_per_group]
-        text = " ".join(w["word"].strip() for w in chunk)
+    chunk = []
+    for w in words:
+        if chunk and (w["start"] - chunk[-1]["end"]) > gap_threshold:
+            text = " ".join(c["word"].strip() for c in chunk)
+            groups.append((chunk[0]["start"], chunk[-1]["end"], text))
+            chunk = []
+        chunk.append(w)
+        if len(chunk) >= words_per_group:
+            text = " ".join(c["word"].strip() for c in chunk)
+            groups.append((chunk[0]["start"], chunk[-1]["end"], text))
+            chunk = []
+    if chunk:
+        text = " ".join(c["word"].strip() for c in chunk)
         groups.append((chunk[0]["start"], chunk[-1]["end"], text))
 
     lines = ["WEBVTT", ""]
@@ -1157,8 +1190,11 @@ def words_to_vtt(words: List[Dict], output_path: str, words_per_group: int = 3):
     print_success(f"WebVTT saved to {output_path} ({len(groups)} blocks)")
 
 
-def words_to_ass(words: List[Dict], output_path: str, words_per_group: int = 3, prefs: dict = None):
-    """Convert word-level timestamps into ASS subtitles with optional styling."""
+def words_to_ass(words: List[Dict], output_path: str, words_per_group: int = 3, prefs: dict = None, gap_threshold: float = 1.0):
+    """Convert word-level timestamps into ASS subtitles with optional styling.
+
+    Splits subtitle chunks when there's a gap > gap_threshold seconds between words.
+    """
     import re as _re
 
     def fmt(seconds: float) -> str:
@@ -1194,9 +1230,19 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
 
     groups = []
-    for i in range(0, len(words), words_per_group):
-        chunk = words[i:i + words_per_group]
-        text = " ".join(w["word"].strip() for w in chunk)
+    chunk = []
+    for w in words:
+        if chunk and (w["start"] - chunk[-1]["end"]) > gap_threshold:
+            text = " ".join(c["word"].strip() for c in chunk)
+            groups.append((chunk[0]["start"], chunk[-1]["end"], text))
+            chunk = []
+        chunk.append(w)
+        if len(chunk) >= words_per_group:
+            text = " ".join(c["word"].strip() for c in chunk)
+            groups.append((chunk[0]["start"], chunk[-1]["end"], text))
+            chunk = []
+    if chunk:
+        text = " ".join(c["word"].strip() for c in chunk)
         groups.append((chunk[0]["start"], chunk[-1]["end"], text))
 
     for start, end, text in groups:
@@ -1210,17 +1256,40 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     print_success(f"ASS saved to {output_path} ({len(groups)} blocks)")
 
 
-def words_to_json(words: List[Dict], output_path: str, words_per_group: int = 3):
-    """Convert word-level timestamps into JSON format."""
+def words_to_json(words: List[Dict], output_path: str, words_per_group: int = 3, gap_threshold: float = 1.0):
+    """Convert word-level timestamps into JSON format.
+
+    Splits subtitle chunks when there's a gap > gap_threshold seconds between words.
+    """
     groups = []
-    for i in range(0, len(words), words_per_group):
-        chunk = words[i:i + words_per_group]
-        text = " ".join(w["word"].strip() for w in chunk)
+    chunk = []
+    for w in words:
+        if chunk and (w["start"] - chunk[-1]["end"]) > gap_threshold:
+            text = " ".join(c["word"].strip() for c in chunk)
+            groups.append({
+                "text": text,
+                "start": chunk[0]["start"],
+                "end": chunk[-1]["end"],
+                "words": [{"word": c["word"], "start": c["start"], "end": c["end"]} for c in chunk]
+            })
+            chunk = []
+        chunk.append(w)
+        if len(chunk) >= words_per_group:
+            text = " ".join(c["word"].strip() for c in chunk)
+            groups.append({
+                "text": text,
+                "start": chunk[0]["start"],
+                "end": chunk[-1]["end"],
+                "words": [{"word": c["word"], "start": c["start"], "end": c["end"]} for c in chunk]
+            })
+            chunk = []
+    if chunk:
+        text = " ".join(c["word"].strip() for c in chunk)
         groups.append({
             "text": text,
             "start": chunk[0]["start"],
             "end": chunk[-1]["end"],
-            "words": [{"word": w["word"], "start": w["start"], "end": w["end"]} for w in chunk]
+            "words": [{"word": c["word"], "start": c["start"], "end": c["end"]} for c in chunk]
         })
 
     output = {
@@ -1645,22 +1714,22 @@ def main():
 
     if args.format in ["srt", "all"]:
         srt_path = os.path.join(args.output, f"{base_name}.srt")
-        words_to_srt(words, srt_path, args.words_per_chunk)
+        words_to_srt(words, srt_path, args.words_per_chunk, args.gap_threshold)
         output_files.append(srt_path)
 
     if args.format in ["vtt", "all"]:
         vtt_path = os.path.join(args.output, f"{base_name}.vtt")
-        words_to_vtt(words, vtt_path, args.words_per_chunk)
+        words_to_vtt(words, vtt_path, args.words_per_chunk, args.gap_threshold)
         output_files.append(vtt_path)
 
     if args.format in ["ass", "all"]:
         ass_path = os.path.join(args.output, f"{base_name}.ass")
-        words_to_ass(words, ass_path, args.words_per_chunk, prefs=subtitle_prefs)
+        words_to_ass(words, ass_path, args.words_per_chunk, prefs=subtitle_prefs, gap_threshold=args.gap_threshold)
         output_files.append(ass_path)
 
     if args.format in ["json", "all"]:
         json_path = os.path.join(args.output, f"{base_name}.json")
-        words_to_json(words, json_path, args.words_per_chunk)
+        words_to_json(words, json_path, args.words_per_chunk, args.gap_threshold)
         output_files.append(json_path)
 
     # Step 6: Burn subtitles into video if requested
