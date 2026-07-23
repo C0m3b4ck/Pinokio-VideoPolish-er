@@ -101,15 +101,14 @@ def process_audio(
     def log(msg: str):
         logs.append(msg)
 
-    try:
-        return _run_pipeline(
-            input_file, model_name, language, model_size,
-            remove_silence, silence_threshold, min_silence_duration,
-            remove_stutters, stutter_patterns, output_format,
-            words_per_chunk, device, script_file, similarity_threshold,
-            burn_subtitles, fix_grammar, llm_fix, llm_url, llm_api_key, llm_model,
-            logs, output_files, progress, log,
-        )
+    return _run_pipeline(
+        input_file, model_name, language, model_size,
+        remove_silence, silence_threshold, min_silence_duration,
+        remove_stutters, stutter_patterns, output_format,
+        words_per_chunk, device, script_file, similarity_threshold,
+        burn_subtitles, fix_grammar, llm_fix, llm_url, llm_api_key, llm_model,
+        logs, output_files, progress, log,
+    )
 
 
 def _run_pipeline(
