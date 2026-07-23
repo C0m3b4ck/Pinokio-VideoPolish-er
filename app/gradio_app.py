@@ -98,6 +98,7 @@ def process_audio(
     position_name,
     outline,
     shadow,
+    capitalize_sections,
     progress=gr.Progress(),
 ):
     """Main processing pipeline. Returns (log_text, output_files_list, stats_json, transcription_text)."""
@@ -114,6 +115,7 @@ def process_audio(
         words_per_chunk, device, script_file, similarity_threshold,
         burn_subtitles, fix_grammar, llm_fix, llm_url, llm_api_key, llm_model,
         font_name, font_size, font_color, position_name, outline, shadow,
+        capitalize_sections,
         logs, output_files, progress, log,
     )
 
@@ -125,6 +127,7 @@ def _run_pipeline(
     words_per_chunk, device, script_file, similarity_threshold,
     burn_subtitles, fix_grammar, llm_fix, llm_url, llm_api_key, llm_model,
     font_name, font_size, font_color, position_name, outline, shadow,
+    capitalize_sections,
     logs, output_files, progress, log,
 ):
     """Inner pipeline. Uses a mutable dict to share output_dir with the outer finally block."""
@@ -248,7 +251,7 @@ def _run_pipeline(
         progress(0.72, desc="Fixing grammar & punctuation...")
         log("=== Step 4: Fixing Grammar & Punctuation ===")
         try:
-            words = fix_grammar_punctuation(words, int(words_per_chunk))
+            words = fix_grammar_punctuation(words, int(words_per_chunk), capitalize_sections)
             log("Grammar & punctuation fixed")
         except Exception as e:
             log(f"Warning: Grammar fix failed: {type(e).__name__}")
@@ -477,7 +480,12 @@ def build_ui() -> gr.Blocks:
                     fix_grammar = gr.Checkbox(
                         label="Fix Grammar & Punctuation",
                         value=False,
-                        info="Capitalizes 'I', fixes punctuation, capitalizes sentence starts.",
+                        info="Capitalizes 'I', adds commas/periods, capitalizes sentence starts.",
+                    )
+                    capitalize_sections = gr.Checkbox(
+                        label="Capitalize Beginning of Each Section",
+                        value=True,
+                        info="Capitalizes the first word of every subtitle chunk.",
                     )
                     llm_fix = gr.Checkbox(
                         label="Use LLM to Fix Grammar",
@@ -567,6 +575,7 @@ def build_ui() -> gr.Blocks:
                 position_name,
                 outline,
                 shadow,
+                capitalize_sections,
             ],
             outputs=[log_output, output_files, stats_json, transcription_text],
         )
