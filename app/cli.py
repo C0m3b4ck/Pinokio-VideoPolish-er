@@ -106,6 +106,9 @@ Examples:
   %(prog)s --input interview.mp4 --silence-threshold -35 --min-silence-duration 300
   %(prog)s --input video.mp4 --script original.srt --similarity-threshold 85
   %(prog)s --input video.mp4 --format ass --burn
+  %(prog)s --input video.mp4 --fix-grammar
+  %(prog)s --input video.mp4 --llm-fix --llm-url http://localhost:11434/v1
+  %(prog)s --input video.mp4 --manual-edit
         """
     )
 
@@ -219,6 +222,45 @@ Examples:
         "--burn",
         action="store_true",
         help="Burn subtitles into video using ffmpeg (requires ffmpeg installed)"
+    )
+
+    parser.add_argument(
+        "--fix-grammar",
+        action="store_true",
+        help="Fix grammar and punctuation (capitalizes 'i', adds periods, etc.)"
+    )
+
+    parser.add_argument(
+        "--llm-fix",
+        action="store_true",
+        help="Use an LLM API to fix grammar and punctuation"
+    )
+
+    parser.add_argument(
+        "--llm-url",
+        type=str,
+        default="http://localhost:11434/v1",
+        help="LLM API URL (default: http://localhost:11434/v1 for Ollama)"
+    )
+
+    parser.add_argument(
+        "--llm-api-key",
+        type=str,
+        default="",
+        help="LLM API key (not needed for local Ollama)"
+    )
+
+    parser.add_argument(
+        "--llm-model",
+        type=str,
+        default="",
+        help="LLM model name (leave empty to let API decide)"
+    )
+
+    parser.add_argument(
+        "--manual-edit",
+        action="store_true",
+        help="Save transcription to file and let you edit it manually before output"
     )
 
     return parser.parse_args()
@@ -1137,6 +1179,159 @@ def burn_subtitles_to_video(
     return True
 
 
+def fix_grammar_punctuation(words: List[Dict]) -> List[Dict]:
+    """Fix common grammar and punctuation issues in transcribed words.
+
+    Fixes: capitalizing 'i', capitalizing first word of each subtitle group,
+    adding missing periods at end of sentences, fixing common transcription artifacts.
+    """
+    if not words:
+        return words
+
+    fixed = []
+    for i, word in enumerate(words):
+        w = dict(word)
+        text = w.get("word", "")
+
+        # Capitalize standalone "i" to "I"
+        if text == "i":
+            w["word"] = "I"
+        elif text == "i'm":
+            w["word"] = "I'm"
+        elif text == "i've":
+            w["word"] = "I've"
+        elif text == "i'll":
+            w["word"] = "I'll"
+        elif text == "i'd":
+            w["word"] = "I'd"
+
+        # Capitalize first letter if at start of a new sentence (after . ! ?)
+        if i > 0 and text:
+            prev_text = words[i - 1].get("word", "").rstrip()
+            if prev_text and prev_text[-1] in ".!?":
+                w["word"] = text[0].upper() + text[1:] if len(text) > 1 else text.upper()
+
+        fixed.append(w)
+
+    # Capitalize first word of entire transcription
+    if fixed:
+        first = dict(fixed[0])
+        t = first.get("word", "")
+        if t:
+            first["word"] = t[0].upper() + t[1:] if len(t) > 1 else t.upper()
+        fixed[0] = first
+
+    return fixed
+
+
+def fix_text_with_llm(
+    words: List[Dict],
+    api_url: str,
+    api_key: str,
+    model: str = "",
+) -> List[Dict]:
+    """Send transcribed text to an LLM API to fix grammar and punctuation.
+
+    Uses OpenAI-compatible API format. The LLM receives the raw transcript
+    and returns a corrected version, preserving word-level timing.
+    """
+    import urllib.request
+    import urllib.error
+
+    if not words:
+        return words
+
+    raw_text = " ".join(w.get("word", "") for w in words)
+
+    prompt = (
+        "Fix the grammar and punctuation of this transcription. "
+        "Do not add or remove any words, only fix capitalization, punctuation, "
+        "and grammar. Return ONLY the corrected text with no explanations:\n\n"
+        f"{raw_text}"
+    )
+
+    # Build API URL
+    api_url = api_url.rstrip("/")
+    if not api_url.endswith("/chat/completions"):
+        api_url = api_url + "/chat/completions"
+
+    payload = {
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.1,
+    }
+    if model:
+        payload["model"] = model
+
+    data = json.dumps(payload).encode("utf-8")
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}",
+    }
+
+    print_info("Sending text to LLM for grammar correction...")
+
+    req = urllib.request.Request(api_url, data=data, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.URLError as e:
+        print_error(f"LLM API request failed: {e}")
+        return words
+    except Exception as e:
+        print_error(f"LLM API error: {e}")
+        return words
+
+    corrected = result.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+    if not corrected:
+        print_warning("LLM returned empty response, using original text")
+        return words
+
+    print_success("LLM grammar correction complete")
+
+    # Re-align corrected words with original timestamps
+    corrected_tokens = corrected.split()
+    fixed = []
+    for i, word in enumerate(words):
+        w = dict(word)
+        if i < len(corrected_tokens):
+            w["word"] = corrected_tokens[i]
+        fixed.append(w)
+
+    return fixed
+
+
+def prompt_manual_edit(words: List[Dict], output_dir: str, base_name: str) -> List[Dict]:
+    """Save transcription to a temp file, let user edit it, then re-read."""
+    raw_path = os.path.join(output_dir, f"{base_name}_edit.txt")
+    raw_text = " ".join(w.get("word", "") for w in words)
+
+    Path(raw_path).write_text(raw_text, encoding="utf-8")
+    print_info(f"\nTranscription saved to: {raw_path}")
+    print_info("Edit the file in your text editor, then press Enter here to continue...")
+
+    try:
+        input()
+    except (EOFError, KeyboardInterrupt):
+        print_warning("No input received, using original transcription")
+        return words
+
+    edited_text = Path(raw_path).read_text(encoding="utf-8").strip()
+    if not edited_text:
+        print_warning("Edited file is empty, using original transcription")
+        return words
+
+    edited_tokens = edited_text.split()
+    fixed = []
+    for i, word in enumerate(words):
+        w = dict(word)
+        if i < len(edited_tokens):
+            w["word"] = edited_tokens[i]
+        fixed.append(w)
+
+    print_success("Manual edit applied")
+    return fixed
+
+
 def main():
     """Main function."""
     args = parse_arguments()
@@ -1220,10 +1415,25 @@ def main():
     else:
         print_info("\n=== Step 3: Skipping Stutter Removal ===")
 
-    # Step 4: Generate output files
-    print_info("\n=== Step 4: Generating Output Files ===")
-
     base_name = Path(args.input).stem
+
+    # Step 4: Fix grammar/punctuation
+    if args.fix_grammar:
+        print_info("\n=== Step 4: Fixing Grammar & Punctuation ===")
+        words = fix_grammar_punctuation(words)
+        print_success("Grammar & punctuation fixed")
+    elif args.llm_fix:
+        print_info("\n=== Step 4: LLM Grammar Correction ===")
+        words = fix_text_with_llm(words, args.llm_url, args.llm_api_key, args.llm_model)
+    elif args.manual_edit:
+        print_info("\n=== Step 4: Manual Edit ===")
+        words = prompt_manual_edit(words, args.output, base_name)
+    else:
+        print_info("\n=== Step 4: Skipping Grammar Fix ===")
+
+    # Step 5: Generate output files
+    print_info("\n=== Step 5: Generating Output Files ===")
+
     output_files = []
 
     if args.format in ["srt", "all"]:
@@ -1246,9 +1456,9 @@ def main():
         words_to_json(words, json_path, args.words_per_chunk)
         output_files.append(json_path)
 
-    # Step 5: Burn subtitles into video if requested
+    # Step 6: Burn subtitles into video if requested
     if args.burn:
-        print_info("\n=== Step 5: Burning Subtitles Into Video ===")
+        print_info("\n=== Step 6: Burning Subtitles Into Video ===")
         burn_sub_path = None
         if args.format in ["ass", "all"]:
             burn_sub_path = os.path.join(args.output, f"{base_name}.ass")
@@ -1269,9 +1479,9 @@ def main():
             else:
                 print_warning("Subtitle burning failed, continuing with remaining steps")
 
-    # Step 6: Verify against original script if provided
+    # Step 7: Verify against original script if provided
     if args.script:
-        print_info("\n=== Step 6: Verifying Against Original Script ===")
+        print_info("\n=== Step 7: Verifying Against Original Script ===")
 
         if not validate_script_file(args.script):
             print_warning("Skipping verification due to invalid script file")

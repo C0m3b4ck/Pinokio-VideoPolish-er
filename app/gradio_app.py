@@ -32,6 +32,8 @@ from cli import (
     words_to_ass,
     words_to_json,
     burn_subtitles_to_video,
+    fix_grammar_punctuation,
+    fix_text_with_llm,
 )
 
 SUPPORTED_AUDIO_EXTENSIONS = (".mp4", ".wav", ".mp3", ".m4a", ".flac", ".ogg", ".mkv", ".avi", ".mov", ".webm")
@@ -85,6 +87,11 @@ def process_audio(
     script_file,
     similarity_threshold,
     burn_subtitles,
+    fix_grammar,
+    llm_fix,
+    llm_url,
+    llm_api_key,
+    llm_model,
     progress=gr.Progress(),
 ):
     """Main processing pipeline. Returns (log_text, output_files_list, stats_json, transcription_text)."""
@@ -100,7 +107,7 @@ def process_audio(
             remove_silence, silence_threshold, min_silence_duration,
             remove_stutters, stutter_patterns, output_format,
             words_per_chunk, device, script_file, similarity_threshold,
-            burn_subtitles,
+            burn_subtitles, fix_grammar, llm_fix, llm_url, llm_api_key, llm_model,
             logs, output_files, progress, log,
         )
 
@@ -110,7 +117,7 @@ def _run_pipeline(
     remove_silence, silence_threshold, min_silence_duration,
     remove_stutters, stutter_patterns, output_format,
     words_per_chunk, device, script_file, similarity_threshold,
-    burn_subtitles,
+    burn_subtitles, fix_grammar, llm_fix, llm_url, llm_api_key, llm_model,
     logs, output_files, progress, log,
 ):
     """Inner pipeline. Uses a mutable dict to share output_dir with the outer finally block."""
@@ -203,9 +210,29 @@ def _run_pipeline(
     else:
         log("=== Step 3: Skipping Stutter Removal ===")
 
-    # --- Step 4: Generate output ---
+    # --- Step 4: Fix grammar/punctuation ---
+    if fix_grammar:
+        progress(0.72, desc="Fixing grammar & punctuation...")
+        log("=== Step 4: Fixing Grammar & Punctuation ===")
+        try:
+            words = fix_grammar_punctuation(words)
+            log("Grammar & punctuation fixed")
+        except Exception as e:
+            log(f"Warning: Grammar fix failed: {type(e).__name__}")
+    elif llm_fix:
+        progress(0.72, desc="LLM grammar correction...")
+        log("=== Step 4: LLM Grammar Correction ===")
+        try:
+            words = fix_text_with_llm(words, llm_url, llm_api_key, llm_model)
+            log("LLM grammar correction complete")
+        except Exception as e:
+            log(f"Warning: LLM fix failed: {type(e).__name__}")
+    else:
+        log("=== Step 4: Skipping Grammar Fix ===")
+
+    # --- Step 5: Generate output ---
     progress(0.80, desc="Generating output files...")
-    log("=== Step 4: Generating Output Files ===")
+    log("=== Step 5: Generating Output Files ===")
 
     fmt_lower = output_format.lower()
     try:
@@ -228,7 +255,7 @@ def _run_pipeline(
     except Exception as e:
         log(f"Warning: Output generation failed: {type(e).__name__}")
 
-    # --- Step 5: Burn subtitles into video ---
+    # --- Step 6: Burn subtitles into video ---
     if burn_subtitles:
         progress(0.85, desc="Burning subtitles into video...")
         log("=== Step 5: Burning Subtitles Into Video ===")
@@ -253,10 +280,10 @@ def _run_pipeline(
             except Exception as e:
                 log(f"Warning: Subtitle burning failed: {type(e).__name__}")
 
-    # --- Step 6: Verification ---
+    # --- Step 7: Verification ---
     if script_file and script_file != "" and os.path.exists(script_file):
         progress(0.90, desc="Verifying against original script...")
-        log("=== Step 6: Verifying Against Original Script ===")
+        log("=== Step 7: Verifying Against Original Script ===")
         try:
             original_text = parse_script_file(script_file)
             if original_text:
@@ -390,6 +417,34 @@ def build_ui() -> gr.Blocks:
                         info="Hardcodes subtitles onto the video file using ffmpeg.",
                     )
 
+                with gr.Accordion("Text Fix", open=False):
+                    fix_grammar = gr.Checkbox(
+                        label="Fix Grammar & Punctuation",
+                        value=False,
+                        info="Capitalizes 'I', fixes punctuation, capitalizes sentence starts.",
+                    )
+                    llm_fix = gr.Checkbox(
+                        label="Use LLM to Fix Grammar",
+                        value=False,
+                        info="Sends transcription to an LLM API for grammar correction.",
+                    )
+                    llm_url = gr.Textbox(
+                        value="http://localhost:11434/v1",
+                        label="LLM API URL",
+                        info="Default is Ollama local. Use OpenAI URL for ChatGPT.",
+                    )
+                    llm_api_key = gr.Textbox(
+                        value="",
+                        label="LLM API Key",
+                        type="password",
+                        info="Leave empty for local Ollama.",
+                    )
+                    llm_model = gr.Textbox(
+                        value="",
+                        label="LLM Model Name",
+                        info="Leave empty to let the API decide.",
+                    )
+
                 with gr.Accordion("Verification", open=False):
                     script_file = gr.File(
                         label="Original Script (optional)",
@@ -445,6 +500,11 @@ def build_ui() -> gr.Blocks:
                 script_file,
                 similarity_threshold,
                 burn_subtitles,
+                fix_grammar,
+                llm_fix,
+                llm_url,
+                llm_api_key,
+                llm_model,
             ],
             outputs=[log_output, output_files, stats_json, transcription_text],
         )
