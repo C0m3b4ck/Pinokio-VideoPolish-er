@@ -33,6 +33,7 @@ from cli import (
     words_to_vtt,
     words_to_ass,
     words_to_json,
+    burn_subtitles_to_video,
 )
 
 SUPPORTED_AUDIO_EXTENSIONS = (".mp4", ".wav", ".mp3", ".m4a", ".flac", ".ogg", ".mkv", ".avi", ".mov", ".webm")
@@ -85,6 +86,7 @@ def process_audio(
     device,
     script_file,
     similarity_threshold,
+    burn_subtitles,
     progress=gr.Progress(),
 ):
     """Main processing pipeline. Returns (log_text, output_files_list, stats_json, transcription_text)."""
@@ -101,6 +103,7 @@ def process_audio(
             remove_silence, silence_threshold, min_silence_duration,
             remove_stutters, stutter_patterns, output_format,
             words_per_chunk, device, script_file, similarity_threshold,
+            burn_subtitles,
             logs, output_files, progress, log,
         )
     finally:
@@ -116,6 +119,7 @@ def _run_pipeline(
     remove_silence, silence_threshold, min_silence_duration,
     remove_stutters, stutter_patterns, output_format,
     words_per_chunk, device, script_file, similarity_threshold,
+    burn_subtitles,
     logs, output_files, progress, log,
 ):
     """Inner pipeline. Uses a mutable dict to share output_dir with the outer finally block."""
@@ -232,10 +236,35 @@ def _run_pipeline(
     except Exception as e:
         log(f"Warning: Output generation failed: {type(e).__name__}")
 
-    # --- Step 5: Verification ---
+    # --- Step 5: Burn subtitles into video ---
+    if burn_subtitles:
+        progress(0.85, desc="Burning subtitles into video...")
+        log("=== Step 5: Burning Subtitles Into Video ===")
+        burn_sub_path = None
+        if fmt_lower in ("ass", "all"):
+            burn_sub_path = os.path.join(output_dir, f"{base_name}.ass")
+        elif fmt_lower in ("srt", "all"):
+            burn_sub_path = os.path.join(output_dir, f"{base_name}.srt")
+        elif fmt_lower in ("vtt", "all"):
+            burn_sub_path = os.path.join(output_dir, f"{base_name}.vtt")
+
+        if burn_sub_path:
+            video_ext = Path(input_file).suffix
+            burn_output = os.path.join(output_dir, f"{base_name}_burned{video_ext}")
+            try:
+                success = burn_subtitles_to_video(input_file, burn_sub_path, burn_output)
+                if success:
+                    output_files.append(burn_output)
+                    log(f"Video with burned subtitles saved to {os.path.basename(burn_output)}")
+                else:
+                    log("Warning: Subtitle burning failed")
+            except Exception as e:
+                log(f"Warning: Subtitle burning failed: {type(e).__name__}")
+
+    # --- Step 6: Verification ---
     if script_file and script_file != "" and os.path.exists(script_file):
         progress(0.90, desc="Verifying against original script...")
-        log("=== Step 5: Verifying Against Original Script ===")
+        log("=== Step 6: Verifying Against Original Script ===")
         try:
             original_text = parse_script_file(script_file)
             if original_text:
@@ -363,6 +392,11 @@ def build_ui() -> gr.Blocks:
                         minimum=1, maximum=8, value=3, step=1,
                         label="Words per Subtitle Chunk",
                     )
+                    burn_subtitles = gr.Checkbox(
+                        label="Burn Subtitles into Video",
+                        value=False,
+                        info="Hardcodes subtitles onto the video file using ffmpeg.",
+                    )
 
                 with gr.Accordion("Verification", open=False):
                     script_file = gr.File(
@@ -418,6 +452,7 @@ def build_ui() -> gr.Blocks:
                 device,
                 script_file,
                 similarity_threshold,
+                burn_subtitles,
             ],
             outputs=[log_output, output_files, stats_json, transcription_text],
         )
