@@ -225,9 +225,51 @@ Examples:
     )
 
     parser.add_argument(
-        "--fix-grammar",
+        "--capitalize-i",
         action="store_true",
-        help="Fix grammar and punctuation (capitalizes 'i', adds periods, etc.)"
+        help="Capitalize 'i' and variants (i'm, i've, i'll, i'd)"
+    )
+
+    parser.add_argument(
+        "--capitalize-after-punct",
+        action="store_true",
+        help="Capitalize word after sentence-ending punctuation (. ! ?)"
+    )
+
+    parser.add_argument(
+        "--add-commas-conjunctions",
+        action="store_true",
+        help="Add commas before conjunctions (and, but, or, so, because, etc.)"
+    )
+
+    parser.add_argument(
+        "--add-commas-intros",
+        action="store_true",
+        help="Add commas after introductory words (well, now, yes, no, etc.)"
+    )
+
+    parser.add_argument(
+        "--capitalize-start",
+        action="store_true",
+        help="Capitalize first word of entire transcription"
+    )
+
+    parser.add_argument(
+        "--capitalize-sections",
+        action="store_true",
+        help="Capitalize first word of each subtitle chunk"
+    )
+
+    parser.add_argument(
+        "--add-periods",
+        action="store_true",
+        help="Add period at end of each subtitle chunk"
+    )
+
+    parser.add_argument(
+        "--no-fix-grammar",
+        action="store_true",
+        help="Disable ALL grammar fixes (overrides all individual --no-* flags)"
     )
 
     parser.add_argument(
@@ -306,12 +348,6 @@ Examples:
         type=int,
         default=1,
         help="Subtitle shadow depth 0-3 (default: 1)"
-    )
-
-    parser.add_argument(
-        "--no-capitalize-sections",
-        action="store_true",
-        help="Disable capitalizing first word of each subtitle chunk"
     )
 
     return parser.parse_args()
@@ -1246,37 +1282,40 @@ def burn_subtitles_to_video(
 def fix_grammar_punctuation(
     words: List[Dict],
     words_per_group: int = 3,
+    capitalize_i: bool = True,
+    capitalize_after_punct: bool = True,
+    add_commas_conjunctions: bool = True,
+    add_commas_intros: bool = True,
+    capitalize_start: bool = True,
     capitalize_sections: bool = True,
+    add_periods: bool = True,
 ) -> List[Dict]:
     """Fix grammar and punctuation in transcribed words.
 
-    - Capitalizes first letter of entire transcription
-    - Capitalizes first word of each subtitle chunk (if capitalize_sections)
-    - Capitalizes 'i' variants (case-insensitive)
-    - Capitalizes word after sentence-ending punctuation
-    - Adds periods at end of subtitle chunks
-    - Adds commas before conjunctions (and, but, or, so, because, etc.)
-    - Adds commas after introductory words (well, now, so, yes, no, etc.)
+    Each fix can be toggled individually:
+      - capitalize_i: capitalize 'i' and variants (i'm, i've, i'll, i'd)
+      - capitalize_after_punct: capitalize word after . ! ?
+      - add_commas_conjunctions: add commas before conjunctions
+      - add_commas_intros: add commas after introductory words at chunk starts
+      - capitalize_start: capitalize first word of entire transcription
+      - capitalize_sections: capitalize first word of each subtitle chunk
+      - add_periods: add period at end of each subtitle chunk
     """
     if not words:
         return words
 
     fixed = [dict(w) for w in words]
 
-    # --- Pass 1: fix individual words ---
     i_map = {"i": "I", "i'm": "I'm", "i've": "I've", "i'll": "I'll", "i'd": "I'd"}
     conjunctions = {"and", "but", "or", "so", "because", "although", "however",
                     "therefore", "moreover", "furthermore", "nevertheless",
                     "meanwhile", "otherwise", "instead", "yet", "nor"}
     intro_words = {"well", "now", "so", "yes", "no", "oh", "hey", "okay",
                    "ok", "right", "look", "listen", "basically", "actually",
-                   "honestly", "anyway", "anyways", "well", "then",
+                   "honestly", "anyway", "anyways", "then",
                    "first", "second", "third", "finally", "also"}
-    connectors = {"also", "too", "either", "neither", "just", "still",
-                  "already", "even", "only", "really", "very", "quite",
-                  "almost", "probably", "certainly", "definitely", "maybe",
-                  "perhaps", "certainly", "absolutely"}
 
+    # --- Pass 1: fix individual words ---
     for i in range(len(fixed)):
         text = fixed[i].get("word", "").strip()
         if not text:
@@ -1285,44 +1324,45 @@ def fix_grammar_punctuation(
         lower = text.lower()
 
         # Fix i-variants
-        if lower in i_map:
+        if capitalize_i and lower in i_map:
             fixed[i] = dict(fixed[i])
             fixed[i]["word"] = i_map[lower]
             continue
 
         # Capitalize after sentence-ending punctuation
-        if i > 0:
+        if capitalize_after_punct and i > 0:
             prev = fixed[i - 1].get("word", "").strip()
             if prev and prev[-1] in ".!?":
                 fixed[i] = dict(fixed[i])
                 fixed[i]["word"] = text[0].upper() + text[1:]
 
     # --- Pass 2: add commas before conjunctions ---
-    for i in range(1, len(fixed) - 1):
-        text = fixed[i].get("word", "").strip().lower()
-        prev = fixed[i - 1].get("word", "").strip()
-        if not prev:
-            continue
-        # Add comma before conjunction if previous word isn't already punctuated
-        if text in conjunctions and prev[-1] not in ",.;:!?":
-            fixed[i] = dict(fixed[i])
-            fixed[i - 1] = dict(fixed[i - 1])
-            fixed[i - 1]["word"] = prev + ","
+    if add_commas_conjunctions:
+        for i in range(1, len(fixed) - 1):
+            text = fixed[i].get("word", "").strip().lower()
+            prev = fixed[i - 1].get("word", "").strip()
+            if not prev:
+                continue
+            if text in conjunctions and prev[-1] not in ",.;:!?":
+                fixed[i] = dict(fixed[i])
+                fixed[i - 1] = dict(fixed[i - 1])
+                fixed[i - 1]["word"] = prev + ","
 
     # --- Pass 3: add commas after intro words at start of chunks ---
-    for start in range(0, len(fixed), words_per_group):
-        for j in range(start, min(start + words_per_group, len(fixed))):
-            text = fixed[j].get("word", "").strip().lower()
-            if text in intro_words and j + 1 < len(fixed):
-                next_w = fixed[j + 1].get("word", "").strip()
-                if next_w and next_w[-1] not in ",.;:!?":
-                    fixed[j] = dict(fixed[j])
-                    fixed[j + 1] = dict(fixed[j + 1])
-                    fixed[j + 1]["word"] = next_w + ","
-                break
+    if add_commas_intros:
+        for start in range(0, len(fixed), words_per_group):
+            for j in range(start, min(start + words_per_group, len(fixed))):
+                text = fixed[j].get("word", "").strip().lower()
+                if text in intro_words and j + 1 < len(fixed):
+                    next_w = fixed[j + 1].get("word", "").strip()
+                    if next_w and next_w[-1] not in ",.;:!?":
+                        fixed[j] = dict(fixed[j])
+                        fixed[j + 1] = dict(fixed[j + 1])
+                        fixed[j + 1]["word"] = next_w + ","
+                    break
 
     # --- Pass 4: capitalize first word of entire transcription ---
-    if fixed and fixed[0].get("word", "").strip():
+    if capitalize_start and fixed and fixed[0].get("word", "").strip():
         t = fixed[0]["word"].strip()
         fixed[0] = dict(fixed[0])
         fixed[0]["word"] = t[0].upper() + t[1:] if len(t) > 1 else t.upper()
@@ -1338,14 +1378,15 @@ def fix_grammar_punctuation(
                     break
 
     # --- Pass 6: add period at end of each subtitle chunk ---
-    for start in range(0, len(fixed), words_per_group):
-        end = min(start + words_per_group, len(fixed)) - 1
-        if end < 0 or end >= len(fixed):
-            continue
-        t = fixed[end].get("word", "").strip()
-        if t and t[-1] not in "..,;:!?\"'":
-            fixed[end] = dict(fixed[end])
-            fixed[end]["word"] = t + "."
+    if add_periods:
+        for start in range(0, len(fixed), words_per_group):
+            end = min(start + words_per_group, len(fixed)) - 1
+            if end < 0 or end >= len(fixed):
+                continue
+            t = fixed[end].get("word", "").strip()
+            if t and t[-1] not in "..,;:!?\"'":
+                fixed[end] = dict(fixed[end])
+                fixed[end]["word"] = t + "."
 
     return fixed
 
@@ -1576,16 +1617,25 @@ def main():
 
     base_name = Path(args.input).stem
 
-    # Step 4: Fix grammar/punctuation (always runs by default)
+    # Step 4: Fix grammar/punctuation (individual fixes, each toggleable)
     if args.llm_fix:
         print_info("\n=== Step 4: LLM Grammar Correction ===")
         words = fix_text_with_llm(words, args.llm_url, args.llm_api_key, args.llm_model)
     elif args.manual_edit:
         print_info("\n=== Step 4: Manual Edit ===")
         words = prompt_manual_edit(words, args.output, base_name)
-    else:
+    elif not args.no_fix_grammar:
         print_info("\n=== Step 4: Fixing Grammar & Punctuation ===")
-        words = fix_grammar_punctuation(words, args.words_per_chunk, not args.no_capitalize_sections)
+        words = fix_grammar_punctuation(
+            words, args.words_per_chunk,
+            capitalize_i=args.capitalize_i,
+            capitalize_after_punct=args.capitalize_after_punct,
+            add_commas_conjunctions=args.add_commas_conjunctions,
+            add_commas_intros=args.add_commas_intros,
+            capitalize_start=args.capitalize_start,
+            capitalize_sections=args.capitalize_sections,
+            add_periods=args.add_periods,
+        )
         print_success("Grammar & punctuation fixed")
 
     # Step 5: Generate output files

@@ -87,7 +87,6 @@ def process_audio(
     script_file,
     similarity_threshold,
     burn_subtitles,
-    fix_grammar,
     llm_fix,
     llm_url,
     llm_api_key,
@@ -98,7 +97,13 @@ def process_audio(
     position_name,
     outline,
     shadow,
+    capitalize_i,
+    capitalize_after_punct,
+    add_commas_conjunctions,
+    add_commas_intros,
+    capitalize_start,
     capitalize_sections,
+    add_periods,
     progress=gr.Progress(),
 ):
     """Main processing pipeline. Returns (log_text, output_files_list, stats_json, transcription_text)."""
@@ -113,9 +118,10 @@ def process_audio(
         remove_silence, silence_threshold, min_silence_duration,
         remove_stutters, stutter_patterns, output_format,
         words_per_chunk, device, script_file, similarity_threshold,
-        burn_subtitles, fix_grammar, llm_fix, llm_url, llm_api_key, llm_model,
+        burn_subtitles, llm_fix, llm_url, llm_api_key, llm_model,
         font_name, font_size, font_color, position_name, outline, shadow,
-        capitalize_sections,
+        capitalize_i, capitalize_after_punct, add_commas_conjunctions,
+        add_commas_intros, capitalize_start, capitalize_sections, add_periods,
         logs, output_files, progress, log,
     )
 
@@ -125,9 +131,10 @@ def _run_pipeline(
     remove_silence, silence_threshold, min_silence_duration,
     remove_stutters, stutter_patterns, output_format,
     words_per_chunk, device, script_file, similarity_threshold,
-    burn_subtitles, fix_grammar, llm_fix, llm_url, llm_api_key, llm_model,
+    burn_subtitles, llm_fix, llm_url, llm_api_key, llm_model,
     font_name, font_size, font_color, position_name, outline, shadow,
-    capitalize_sections,
+    capitalize_i, capitalize_after_punct, add_commas_conjunctions,
+    add_commas_intros, capitalize_start, capitalize_sections, add_periods,
     logs, output_files, progress, log,
 ):
     """Inner pipeline. Uses a mutable dict to share output_dir with the outer finally block."""
@@ -247,11 +254,20 @@ def _run_pipeline(
             log("LLM grammar correction complete")
         except Exception as e:
             log(f"Warning: LLM fix failed: {type(e).__name__}")
-    elif fix_grammar or not llm_fix:
+    elif not llm_fix:
         progress(0.72, desc="Fixing grammar & punctuation...")
         log("=== Step 4: Fixing Grammar & Punctuation ===")
         try:
-            words = fix_grammar_punctuation(words, int(words_per_chunk), capitalize_sections)
+            words = fix_grammar_punctuation(
+                words, int(words_per_chunk),
+                capitalize_i=capitalize_i,
+                capitalize_after_punct=capitalize_after_punct,
+                add_commas_conjunctions=add_commas_conjunctions,
+                add_commas_intros=add_commas_intros,
+                capitalize_start=capitalize_start,
+                capitalize_sections=capitalize_sections,
+                add_periods=add_periods,
+            )
             log("Grammar & punctuation fixed")
         except Exception as e:
             log(f"Warning: Grammar fix failed: {type(e).__name__}")
@@ -477,15 +493,38 @@ def build_ui() -> gr.Blocks:
                     )
 
                 with gr.Accordion("Text Fix", open=False):
-                    fix_grammar = gr.Checkbox(
-                        label="Fix Grammar & Punctuation",
-                        value=False,
-                        info="Capitalizes 'I', adds commas/periods, capitalizes sentence starts.",
+                    gr.Markdown("**Grammar Fixes** (each toggleable)")
+                    capitalize_i = gr.Checkbox(
+                        label='Capitalize "I" and variants',
+                        value=True,
+                        info="Fixes i, i'm, i've, i'll, i'd",
+                    )
+                    capitalize_after_punct = gr.Checkbox(
+                        label="Capitalize after sentence-ending punctuation",
+                        value=True,
+                        info="Capitalize word after . ! ?",
+                    )
+                    add_commas_conjunctions = gr.Checkbox(
+                        label="Add commas before conjunctions",
+                        value=True,
+                        info="and, but, or, so, because, however, etc.",
+                    )
+                    add_commas_intros = gr.Checkbox(
+                        label="Add commas after introductory words",
+                        value=True,
+                        info="well, now, yes, no, oh, hey, etc.",
+                    )
+                    capitalize_start = gr.Checkbox(
+                        label="Capitalize first word of transcription",
+                        value=True,
                     )
                     capitalize_sections = gr.Checkbox(
-                        label="Capitalize Beginning of Each Section",
+                        label="Capitalize first word of each subtitle chunk",
                         value=True,
-                        info="Capitalizes the first word of every subtitle chunk.",
+                    )
+                    add_periods = gr.Checkbox(
+                        label="Add periods at end of subtitle chunks",
+                        value=True,
                     )
                     llm_fix = gr.Checkbox(
                         label="Use LLM to Fix Grammar",
@@ -564,7 +603,6 @@ def build_ui() -> gr.Blocks:
                 script_file,
                 similarity_threshold,
                 burn_subtitles,
-                fix_grammar,
                 llm_fix,
                 llm_url,
                 llm_api_key,
@@ -575,7 +613,13 @@ def build_ui() -> gr.Blocks:
                 position_name,
                 outline,
                 shadow,
+                capitalize_i,
+                capitalize_after_punct,
+                add_commas_conjunctions,
+                add_commas_intros,
+                capitalize_start,
                 capitalize_sections,
+                add_periods,
             ],
             outputs=[log_output, output_files, stats_json, transcription_text],
         )
