@@ -79,7 +79,7 @@ def regenerate_subtitles(
 
     words = text_to_words(edited_text, words_state)
     if not words:
-        return "Error: Empty transcript.", [], ""
+        return "Error: Empty transcript.", [], "", ""
 
     base_name = sanitize_filename_stem(Path(input_file).stem) if input_file else "subtitles"
     output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
@@ -104,19 +104,25 @@ def regenerate_subtitles(
     }
 
     fmt_lower = output_format.lower()
+    burnable_sub_path = ""
     try:
         if fmt_lower in ("srt", "all"):
             p = os.path.join(output_dir, f"{base_name}.srt")
             words_to_srt(words, p, int(words_per_chunk), float(gap_threshold))
             output_files.append(p)
+            if not burnable_sub_path:
+                burnable_sub_path = p
         if fmt_lower in ("vtt", "all"):
             p = os.path.join(output_dir, f"{base_name}.vtt")
             words_to_vtt(words, p, int(words_per_chunk), float(gap_threshold))
             output_files.append(p)
+            if not burnable_sub_path:
+                burnable_sub_path = p
         if fmt_lower in ("ass", "all"):
             p = os.path.join(output_dir, f"{base_name}.ass")
             words_to_ass(words, p, int(words_per_chunk), prefs=subtitle_prefs, gap_threshold=float(gap_threshold))
             output_files.append(p)
+            burnable_sub_path = p
         if fmt_lower in ("json", "all"):
             p = os.path.join(output_dir, f"{base_name}.json")
             words_to_json(words, p, int(words_per_chunk), float(gap_threshold))
@@ -124,31 +130,23 @@ def regenerate_subtitles(
     except Exception as e:
         logs.append(f"Error generating output: {type(e).__name__}")
 
-    if burn_subtitles and input_file and os.path.exists(input_file):
-        burn_sub_path = None
-        if fmt_lower in ("ass", "all"):
-            burn_sub_path = os.path.join(output_dir, f"{base_name}.ass")
-        elif fmt_lower in ("srt", "all"):
-            burn_sub_path = os.path.join(output_dir, f"{base_name}.srt")
-        elif fmt_lower in ("vtt", "all"):
-            burn_sub_path = os.path.join(output_dir, f"{base_name}.vtt")
-        if burn_sub_path:
-            video_ext = Path(input_file).suffix
-            burn_output = os.path.join(output_dir, f"{base_name}_burned{video_ext}")
-            try:
-                success = burn_subtitles_to_video(input_file, burn_sub_path, burn_output)
-                if success:
-                    output_files.append(burn_output)
-                    logs.append(f"Video with burned subtitles saved to {os.path.basename(burn_output)}")
-            except Exception:
-                pass
+    if burn_subtitles and input_file and os.path.exists(input_file) and burnable_sub_path:
+        video_ext = Path(input_file).suffix
+        burn_output = os.path.join(output_dir, f"{base_name}_burned{video_ext}")
+        try:
+            success = burn_subtitles_to_video(input_file, burnable_sub_path, burn_output)
+            if success:
+                output_files.append(burn_output)
+                logs.append(f"Video with burned subtitles saved to {os.path.basename(burn_output)}")
+        except Exception:
+            pass
 
     logs.append(f"Regenerated subtitle files from {len(words)} words.")
-    return "\n".join(logs) if logs else "Subtitles regenerated.", output_files, edited_text
+    return "\n".join(logs) if logs else "Subtitles regenerated.", output_files, edited_text, burnable_sub_path
 
 
 def burn_only_subtitles(
-    input_file, output_format, words_per_chunk,
+    input_file, sub_path_state,
     font_name, font_size, font_color, position_name, outline, shadow,
 ):
     """Burn existing subtitle files into video without regenerating."""
@@ -156,34 +154,15 @@ def burn_only_subtitles(
     output_files = []
 
     if not input_file or not os.path.exists(input_file):
-        return "Error: No input video file found.", [], ""
+        return "Error: No input video file found.", []
+
+    sub_path = sub_path_state
+
+    if not sub_path or not os.path.exists(sub_path):
+        return "Error: No subtitle file found. Run Process or Regenerate first.", []
 
     base_name = sanitize_filename_stem(Path(input_file).stem)
     output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
-
-    COLOR_PRESETS = {
-        "White": "&H00FFFFFF", "Yellow": "&H0000FFFF", "Cyan": "&H00FFFF00",
-        "Green": "&H0000FF00", "Red": "&H000000FF", "Magenta": "&H00FF00FF",
-        "Blue": "&H00FF0000", "Black": "&H00000000",
-    }
-    POSITION_PRESETS = {
-        "Bottom center": 2, "Top center": 8, "Middle center": 5,
-        "Bottom left": 1, "Bottom right": 3, "Top left": 7, "Top right": 9,
-    }
-
-    fmt_lower = output_format.lower()
-    sub_path = None
-    if fmt_lower in ("ass", "all"):
-        sub_path = os.path.join(output_dir, f"{base_name}.ass")
-    if not sub_path or not os.path.exists(sub_path):
-        if fmt_lower in ("srt", "all"):
-            sub_path = os.path.join(output_dir, f"{base_name}.srt")
-    if not sub_path or not os.path.exists(sub_path):
-        if fmt_lower in ("vtt", "all"):
-            sub_path = os.path.join(output_dir, f"{base_name}.vtt")
-
-    if not sub_path or not os.path.exists(sub_path):
-        return "Error: No subtitle file found. Run Process or Regenerate first.", [], ""
 
     video_ext = Path(input_file).suffix
     burn_output = os.path.join(output_dir, f"{base_name}_burned{video_ext}")
@@ -256,7 +235,7 @@ def process_audio(
     add_periods,
     progress=gr.Progress(),
 ):
-    """Main processing pipeline. Returns (log_text, output_files_list, stats_json, transcription_text, words)."""
+    """Main processing pipeline. Returns (log_text, output_files_list, stats_json, transcription_text, words, sub_path)."""
     logs: List[str] = []
     output_files: List[str] = []
 
@@ -292,10 +271,10 @@ def _run_pipeline(
 
     # --- Validate inputs ---
     if input_file is None:
-        return "Error: No input file provided.", [], "{}", "", []
+        return "Error: No input file provided.", [], "{}", "", [], ""
     err = validate_file(input_file, SUPPORTED_AUDIO_EXTENSIONS)
     if err:
-        return f"Error: {err}", [], "{}", "", []
+        return f"Error: {err}", [], "{}", "", [], ""
 
     if script_file is not None and script_file != "":
         err = validate_file(script_file, SUPPORTED_SCRIPT_EXTENSIONS)
@@ -370,10 +349,10 @@ def _run_pipeline(
     try:
         words = transcribe_audio(working_file, model_name, model_size, language, device)
     except Exception as e:
-        return f"Error during transcription: {type(e).__name__}", [], "{}", "", []
+        return f"Error during transcription: {type(e).__name__}", [], "{}", "", [], ""
 
     if not words:
-        return "Error: No words detected in audio.", [], "{}", "", []
+        return "Error: No words detected in audio.", [], "{}", "", [], ""
 
     stats["transcription_stats"] = {
         "words_detected": len(words),
@@ -427,19 +406,25 @@ def _run_pipeline(
     log("=== Step 5: Generating Output Files ===")
 
     fmt_lower = output_format.lower()
+    burnable_sub_path = ""
     try:
         if fmt_lower in ("srt", "all"):
             p = os.path.join(output_dir, f"{base_name}.srt")
             words_to_srt(words, p, int(words_per_chunk), float(gap_threshold))
             output_files.append(p)
+            if not burnable_sub_path:
+                burnable_sub_path = p
         if fmt_lower in ("vtt", "all"):
             p = os.path.join(output_dir, f"{base_name}.vtt")
             words_to_vtt(words, p, int(words_per_chunk), float(gap_threshold))
             output_files.append(p)
+            if not burnable_sub_path:
+                burnable_sub_path = p
         if fmt_lower in ("ass", "all"):
             p = os.path.join(output_dir, f"{base_name}.ass")
             words_to_ass(words, p, int(words_per_chunk), prefs=subtitle_prefs, gap_threshold=float(gap_threshold))
             output_files.append(p)
+            burnable_sub_path = p
         if fmt_lower in ("json", "all"):
             p = os.path.join(output_dir, f"{base_name}.json")
             words_to_json(words, p, int(words_per_chunk), float(gap_threshold))
@@ -526,7 +511,7 @@ def _run_pipeline(
     progress(1.0, desc="Done!")
     transcription_text = extract_text_from_words(words)
 
-    return "\n".join(logs), output_files, json.dumps(stats, indent=2, default=str), transcription_text, words
+    return "\n".join(logs), output_files, json.dumps(stats, indent=2, default=str), transcription_text, words, burnable_sub_path
 
 
 def build_ui() -> gr.Blocks:
@@ -741,6 +726,7 @@ def build_ui() -> gr.Blocks:
                     interactive=False,
                 )
                 words_state = gr.State([])
+                sub_path_state = gr.State("")
 
         # --- Wire up the buttons ---
         process_btn.click(
@@ -780,7 +766,7 @@ def build_ui() -> gr.Blocks:
                 capitalize_sections,
                 add_periods,
             ],
-            outputs=[log_output, output_files, stats_json, transcription_text, words_state],
+            outputs=[log_output, output_files, stats_json, transcription_text, words_state, sub_path_state],
         )
 
         regenerate_btn.click(
@@ -800,15 +786,14 @@ def build_ui() -> gr.Blocks:
                 burn_subtitles,
                 input_file,
             ],
-            outputs=[log_output, output_files, transcription_text],
+            outputs=[log_output, output_files, transcription_text, sub_path_state],
         )
 
         burn_only_btn.click(
             fn=burn_only_subtitles,
             inputs=[
                 input_file,
-                output_format,
-                words_per_chunk,
+                sub_path_state,
                 font_name,
                 font_size,
                 font_color,
