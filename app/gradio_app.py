@@ -197,7 +197,7 @@ def burn_only_subtitles(
     except Exception as e:
         logs.append(f"Warning: Subtitle burning failed: {type(e).__name__}")
 
-    return "\n".join(logs) if logs else "Done.", output_files, ""
+    return "\n".join(logs) if logs else "Done.", output_files
 
 
 def sanitize_filename_stem(stem: str) -> str:
@@ -816,7 +816,7 @@ def build_ui() -> gr.Blocks:
                 outline,
                 shadow,
             ],
-            outputs=[log_output, output_files, transcription_text],
+            outputs=[log_output, output_files],
         )
 
     return app
