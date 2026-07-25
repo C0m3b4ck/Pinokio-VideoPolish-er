@@ -146,28 +146,72 @@ def regenerate_subtitles(
 
 
 def burn_only_subtitles(
-    input_file, sub_path_state,
+    edited_text, words_state, input_file, output_format, words_per_chunk, gap_threshold,
     font_name, font_size, font_color, position_name, outline, shadow,
 ):
-    """Burn existing subtitle files into video without regenerating."""
+    """Regenerate subtitles from current transcript text and burn into video."""
     logs = []
     output_files = []
 
     if not input_file or not os.path.exists(input_file):
-        return "Error: No input video file found.", []
+        return "Error: No input video file found.", [], edited_text
 
-    sub_path = sub_path_state
-
-    if not sub_path or not os.path.exists(sub_path):
-        return "Error: No subtitle file found. Run Process or Regenerate first.", []
+    words = text_to_words(edited_text, words_state)
+    if not words:
+        return "Error: No words to burn. Edit the transcript first.", [], edited_text
 
     base_name = sanitize_filename_stem(Path(input_file).stem)
     output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
+    os.makedirs(output_dir, exist_ok=True)
+
+    COLOR_PRESETS = {
+        "White": "&H00FFFFFF", "Yellow": "&H0000FFFF", "Cyan": "&H00FFFF00",
+        "Green": "&H0000FF00", "Red": "&H000000FF", "Magenta": "&H00FF00FF",
+        "Blue": "&H00FF0000", "Black": "&H00000000",
+    }
+    POSITION_PRESETS = {
+        "Bottom center": 2, "Top center": 8, "Middle center": 5,
+        "Bottom left": 1, "Bottom right": 3, "Top left": 7, "Top right": 9,
+    }
+    subtitle_prefs = {
+        "font": font_name, "font_size": int(font_size),
+        "color": COLOR_PRESETS.get(font_color, "&H00FFFFFF"),
+        "color_name": font_color,
+        "position": POSITION_PRESETS.get(position_name, 2),
+        "position_name": position_name,
+        "outline": int(outline), "shadow": int(shadow),
+    }
+
+    fmt_lower = output_format.lower()
+    burnable_sub_path = ""
+    try:
+        if fmt_lower in ("srt", "all"):
+            p = os.path.join(output_dir, f"{base_name}.srt")
+            words_to_srt(words, p, int(words_per_chunk), float(gap_threshold))
+            if not burnable_sub_path:
+                burnable_sub_path = p
+        if fmt_lower in ("vtt", "all"):
+            p = os.path.join(output_dir, f"{base_name}.vtt")
+            words_to_vtt(words, p, int(words_per_chunk), float(gap_threshold))
+            if not burnable_sub_path:
+                burnable_sub_path = p
+        if fmt_lower in ("ass", "all"):
+            p = os.path.join(output_dir, f"{base_name}.ass")
+            words_to_ass(words, p, int(words_per_chunk), prefs=subtitle_prefs, gap_threshold=float(gap_threshold))
+            burnable_sub_path = p
+        if fmt_lower in ("json", "all"):
+            p = os.path.join(output_dir, f"{base_name}.json")
+            words_to_json(words, p, int(words_per_chunk), float(gap_threshold))
+    except Exception as e:
+        return f"Error generating subtitles: {type(e).__name__}", [], edited_text
+
+    if not burnable_sub_path or not os.path.exists(burnable_sub_path):
+        return "Error: Failed to generate subtitle file.", [], edited_text
 
     video_ext = Path(input_file).suffix
     burn_output = os.path.join(output_dir, f"{base_name}_burned{video_ext}")
     try:
-        success = burn_subtitles_to_video(input_file, sub_path, burn_output)
+        success = burn_subtitles_to_video(input_file, burnable_sub_path, burn_output)
         if success:
             output_files.append(burn_output)
             logs.append(f"Video with burned subtitles saved to {os.path.basename(burn_output)}")
@@ -176,7 +220,7 @@ def burn_only_subtitles(
     except Exception as e:
         logs.append(f"Warning: Subtitle burning failed: {type(e).__name__}")
 
-    return "\n".join(logs) if logs else "Done.", output_files
+    return "\n".join(logs) if logs else "Done.", output_files, edited_text
 
 
 def sanitize_filename_stem(stem: str) -> str:
@@ -792,8 +836,12 @@ def build_ui() -> gr.Blocks:
         burn_only_btn.click(
             fn=burn_only_subtitles,
             inputs=[
+                transcription_text,
+                words_state,
                 input_file,
-                sub_path_state,
+                output_format,
+                words_per_chunk,
+                gap_threshold,
                 font_name,
                 font_size,
                 font_color,
@@ -801,7 +849,7 @@ def build_ui() -> gr.Blocks:
                 outline,
                 shadow,
             ],
-            outputs=[log_output, output_files],
+            outputs=[log_output, output_files, transcription_text],
         )
 
     return app
