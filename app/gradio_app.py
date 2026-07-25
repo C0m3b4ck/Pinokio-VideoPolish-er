@@ -147,6 +147,59 @@ def regenerate_subtitles(
     return "\n".join(logs) if logs else "Subtitles regenerated.", output_files, edited_text
 
 
+def burn_only_subtitles(
+    input_file, output_format, words_per_chunk,
+    font_name, font_size, font_color, position_name, outline, shadow,
+):
+    """Burn existing subtitle files into video without regenerating."""
+    logs = []
+    output_files = []
+
+    if not input_file or not os.path.exists(input_file):
+        return "Error: No input video file found.", [], ""
+
+    base_name = sanitize_filename_stem(Path(input_file).stem)
+    output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
+
+    COLOR_PRESETS = {
+        "White": "&H00FFFFFF", "Yellow": "&H0000FFFF", "Cyan": "&H00FFFF00",
+        "Green": "&H0000FF00", "Red": "&H000000FF", "Magenta": "&H00FF00FF",
+        "Blue": "&H00FF0000", "Black": "&H00000000",
+    }
+    POSITION_PRESETS = {
+        "Bottom center": 2, "Top center": 8, "Middle center": 5,
+        "Bottom left": 1, "Bottom right": 3, "Top left": 7, "Top right": 9,
+    }
+
+    fmt_lower = output_format.lower()
+    sub_path = None
+    if fmt_lower in ("ass", "all"):
+        sub_path = os.path.join(output_dir, f"{base_name}.ass")
+    if not sub_path or not os.path.exists(sub_path):
+        if fmt_lower in ("srt", "all"):
+            sub_path = os.path.join(output_dir, f"{base_name}.srt")
+    if not sub_path or not os.path.exists(sub_path):
+        if fmt_lower in ("vtt", "all"):
+            sub_path = os.path.join(output_dir, f"{base_name}.vtt")
+
+    if not sub_path or not os.path.exists(sub_path):
+        return "Error: No subtitle file found. Run Process or Regenerate first.", [], ""
+
+    video_ext = Path(input_file).suffix
+    burn_output = os.path.join(output_dir, f"{base_name}_burned{video_ext}")
+    try:
+        success = burn_subtitles_to_video(input_file, sub_path, burn_output)
+        if success:
+            output_files.append(burn_output)
+            logs.append(f"Video with burned subtitles saved to {os.path.basename(burn_output)}")
+        else:
+            logs.append("Warning: Subtitle burning failed")
+    except Exception as e:
+        logs.append(f"Warning: Subtitle burning failed: {type(e).__name__}")
+
+    return "\n".join(logs) if logs else "Done.", output_files, ""
+
+
 def sanitize_filename_stem(stem: str) -> str:
     """Remove characters from a filename stem that could cause path issues."""
     return re.sub(r'[^\w\-.]', '_', stem)[:128]
@@ -671,6 +724,7 @@ def build_ui() -> gr.Blocks:
                     interactive=True,
                 )
                 regenerate_btn = gr.Button("Regenerate Subtitles", variant="secondary")
+                burn_only_btn = gr.Button("Burn into Video", variant="secondary")
                 stats_json = gr.Textbox(
                     label="Processing Stats (JSON)",
                     lines=10,
@@ -745,6 +799,22 @@ def build_ui() -> gr.Blocks:
                 shadow,
                 burn_subtitles,
                 input_file,
+            ],
+            outputs=[log_output, output_files, transcription_text],
+        )
+
+        burn_only_btn.click(
+            fn=burn_only_subtitles,
+            inputs=[
+                input_file,
+                output_format,
+                words_per_chunk,
+                font_name,
+                font_size,
+                font_color,
+                position_name,
+                outline,
+                shadow,
             ],
             outputs=[log_output, output_files, transcription_text],
         )
