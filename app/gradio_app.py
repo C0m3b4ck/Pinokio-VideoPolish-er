@@ -51,6 +51,102 @@ FORMAT_CHOICES = ["srt", "vtt", "ass", "json"]
 DEVICE_CHOICES = ["auto", "cuda", "cpu"]
 
 
+def text_to_words(edited_text: str, original_words: list) -> list:
+    """Map edited text back to word objects, reusing original timing."""
+    if not edited_text or not edited_text.strip():
+        return []
+    new_words_list = edited_text.strip().split()
+    if not original_words:
+        return [{"word": w, "start": 0.0, "end": 0.0} for w in new_words_list]
+    orig_count = len(original_words)
+    result = []
+    for i, w in enumerate(new_words_list):
+        if i < orig_count:
+            result.append({"word": w, "start": original_words[i]["start"], "end": original_words[i]["end"]})
+        else:
+            result.append({"word": w, "start": original_words[-1]["start"], "end": original_words[-1]["end"]})
+    return result
+
+
+def regenerate_subtitles(
+    edited_text, words_state, output_format, words_per_chunk, gap_threshold,
+    font_name, font_size, font_color, position_name, outline, shadow,
+    burn_subtitles, input_file,
+):
+    """Regenerate subtitle files from edited transcript text."""
+    logs = []
+    output_files = []
+
+    words = text_to_words(edited_text, words_state)
+    if not words:
+        return "Error: Empty transcript.", [], ""
+
+    base_name = sanitize_filename_stem(Path(input_file).stem) if input_file else "subtitles"
+    output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
+    os.makedirs(output_dir, exist_ok=True)
+
+    COLOR_PRESETS = {
+        "White": "&H00FFFFFF", "Yellow": "&H0000FFFF", "Cyan": "&H00FFFF00",
+        "Green": "&H0000FF00", "Red": "&H000000FF", "Magenta": "&H00FF00FF",
+        "Blue": "&H00FF0000", "Black": "&H00000000",
+    }
+    POSITION_PRESETS = {
+        "Bottom center": 2, "Top center": 8, "Middle center": 5,
+        "Bottom left": 1, "Bottom right": 3, "Top left": 7, "Top right": 9,
+    }
+    subtitle_prefs = {
+        "font": font_name, "font_size": int(font_size),
+        "color": COLOR_PRESETS.get(font_color, "&H00FFFFFF"),
+        "color_name": font_color,
+        "position": POSITION_PRESETS.get(position_name, 2),
+        "position_name": position_name,
+        "outline": int(outline), "shadow": int(shadow),
+    }
+
+    fmt_lower = output_format.lower()
+    try:
+        if fmt_lower in ("srt", "all"):
+            p = os.path.join(output_dir, f"{base_name}.srt")
+            words_to_srt(words, p, int(words_per_chunk), float(gap_threshold))
+            output_files.append(p)
+        if fmt_lower in ("vtt", "all"):
+            p = os.path.join(output_dir, f"{base_name}.vtt")
+            words_to_vtt(words, p, int(words_per_chunk), float(gap_threshold))
+            output_files.append(p)
+        if fmt_lower in ("ass", "all"):
+            p = os.path.join(output_dir, f"{base_name}.ass")
+            words_to_ass(words, p, int(words_per_chunk), prefs=subtitle_prefs, gap_threshold=float(gap_threshold))
+            output_files.append(p)
+        if fmt_lower in ("json", "all"):
+            p = os.path.join(output_dir, f"{base_name}.json")
+            words_to_json(words, p, int(words_per_chunk), float(gap_threshold))
+            output_files.append(p)
+    except Exception as e:
+        logs.append(f"Error generating output: {type(e).__name__}")
+
+    if burn_subtitles and input_file and os.path.exists(input_file):
+        burn_sub_path = None
+        if fmt_lower in ("ass", "all"):
+            burn_sub_path = os.path.join(output_dir, f"{base_name}.ass")
+        elif fmt_lower in ("srt", "all"):
+            burn_sub_path = os.path.join(output_dir, f"{base_name}.srt")
+        elif fmt_lower in ("vtt", "all"):
+            burn_sub_path = os.path.join(output_dir, f"{base_name}.vtt")
+        if burn_sub_path:
+            video_ext = Path(input_file).suffix
+            burn_output = os.path.join(output_dir, f"{base_name}_burned{video_ext}")
+            try:
+                success = burn_subtitles_to_video(input_file, burn_sub_path, burn_output)
+                if success:
+                    output_files.append(burn_output)
+                    logs.append(f"Video with burned subtitles saved to {os.path.basename(burn_output)}")
+            except Exception:
+                pass
+
+    logs.append(f"Regenerated subtitle files from {len(words)} words.")
+    return "\n".join(logs) if logs else "Subtitles regenerated.", output_files, edited_text
+
+
 def sanitize_filename_stem(stem: str) -> str:
     """Remove characters from a filename stem that could cause path issues."""
     return re.sub(r'[^\w\-.]', '_', stem)[:128]
@@ -107,7 +203,7 @@ def process_audio(
     add_periods,
     progress=gr.Progress(),
 ):
-    """Main processing pipeline. Returns (log_text, output_files_list, stats_json, transcription_text)."""
+    """Main processing pipeline. Returns (log_text, output_files_list, stats_json, transcription_text, words)."""
     logs: List[str] = []
     output_files: List[str] = []
 
@@ -143,10 +239,10 @@ def _run_pipeline(
 
     # --- Validate inputs ---
     if input_file is None:
-        return "Error: No input file provided.", [], "{}", ""
+        return "Error: No input file provided.", [], "{}", "", []
     err = validate_file(input_file, SUPPORTED_AUDIO_EXTENSIONS)
     if err:
-        return f"Error: {err}", [], "{}", ""
+        return f"Error: {err}", [], "{}", "", []
 
     if script_file is not None and script_file != "":
         err = validate_file(script_file, SUPPORTED_SCRIPT_EXTENSIONS)
@@ -221,10 +317,10 @@ def _run_pipeline(
     try:
         words = transcribe_audio(working_file, model_name, model_size, language, device)
     except Exception as e:
-        return f"Error during transcription: {type(e).__name__}", [], "{}", ""
+        return f"Error during transcription: {type(e).__name__}", [], "{}", "", []
 
     if not words:
-        return "Error: No words detected in audio.", [], "{}", ""
+        return "Error: No words detected in audio.", [], "{}", "", []
 
     stats["transcription_stats"] = {
         "words_detected": len(words),
@@ -377,7 +473,7 @@ def _run_pipeline(
     progress(1.0, desc="Done!")
     transcription_text = extract_text_from_words(words)
 
-    return "\n".join(logs), output_files, json.dumps(stats, indent=2, default=str), transcription_text
+    return "\n".join(logs), output_files, json.dumps(stats, indent=2, default=str), transcription_text, words
 
 
 def build_ui() -> gr.Blocks:
@@ -572,8 +668,9 @@ def build_ui() -> gr.Blocks:
                 transcription_text = gr.Textbox(
                     label="Transcription",
                     lines=12,
-                    interactive=False,
+                    interactive=True,
                 )
+                regenerate_btn = gr.Button("Regenerate Subtitles", variant="secondary")
                 stats_json = gr.Textbox(
                     label="Processing Stats (JSON)",
                     lines=10,
@@ -589,8 +686,9 @@ def build_ui() -> gr.Blocks:
                     lines=14,
                     interactive=False,
                 )
+                words_state = gr.State([])
 
-        # --- Wire up the button ---
+        # --- Wire up the buttons ---
         process_btn.click(
             fn=process_audio,
             inputs=[
@@ -628,7 +726,27 @@ def build_ui() -> gr.Blocks:
                 capitalize_sections,
                 add_periods,
             ],
-            outputs=[log_output, output_files, stats_json, transcription_text],
+            outputs=[log_output, output_files, stats_json, transcription_text, words_state],
+        )
+
+        regenerate_btn.click(
+            fn=regenerate_subtitles,
+            inputs=[
+                transcription_text,
+                words_state,
+                output_format,
+                words_per_chunk,
+                gap_threshold,
+                font_name,
+                font_size,
+                font_color,
+                position_name,
+                outline,
+                shadow,
+                burn_subtitles,
+                input_file,
+            ],
+            outputs=[log_output, output_files, transcription_text],
         )
 
     return app
