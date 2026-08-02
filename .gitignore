@@ -10,4 +10,5 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
-*~__pycache__/
+*~
+__pycache__/
