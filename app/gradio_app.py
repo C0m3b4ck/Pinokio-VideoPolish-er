@@ -858,8 +858,8 @@ def build_ui() -> gr.Blocks:
 if __name__ == "__main__":
     app = build_ui()
     app.launch(
-        server_name="0.0.0.0",
-        server_port=7860,
+        server_name=os.environ.get("GRADIO_SERVER_NAME", "127.0.0.1"),
+        server_port=int(os.environ.get("GRADIO_SERVER_PORT", "7860")),
         share=False,
         show_error=True,
     )

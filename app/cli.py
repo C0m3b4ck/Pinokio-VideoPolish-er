@@ -10,7 +10,6 @@ import argparse
 import os
 import sys
 import subprocess
-import shlex
 import time
 import json
 import re
@@ -1318,8 +1317,9 @@ def burn_subtitles_to_video(
         print_error(f"Subtitle file not found: {subtitle_path}")
         return False
 
-    sub_path_quoted = shlex.quote(subtitle_path)
-    filter_str = f"subtitles={sub_path_quoted}"
+    # The subtitles filter requires colon, backslash and quote escaping within the filter string
+    sub_path_escaped = subtitle_path.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
+    filter_str = f"subtitles={sub_path_escaped}"
 
     cmd = [
         "ffmpeg", "-y",

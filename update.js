@@ -1,11 +1,12 @@
 module.exports = {
   run: [
     {
+      when: "{{exists('app/.git')}}",
       method: "shell.run",
       params: {
         path: "app",
         message: [
-          "git pull",
+          "git pull --ff-only",
         ]
       }
     },

@@ -4,6 +4,7 @@ module.exports = {
   },
   run: [
     {
+      when: "{{gpu === 'nvidia' && platform === 'linux'}}",
       method: "shell.run",
       params: {
         message: [
@@ -15,7 +16,7 @@ module.exports = {
       method: "shell.run",
       params: {
         message: [
-          "git clone https://github.com/C0m3b4ck/VideoPolish-er.git app",
+          "git clone --depth 1 https://github.com/C0m3b4ck/VideoPolish-er.git app",
         ]
       }
     },
